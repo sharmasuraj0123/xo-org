@@ -11,99 +11,99 @@ import {
 } from "@/components/ui/card"
 import { TrendingUpIcon, TrendingDownIcon } from "lucide-react"
 
-export function SectionCards() {
+export function AgentSectionCards() {
   return (
     <div className="grid grid-cols-1 gap-4 px-4 *:data-[slot=card]:shadow-none lg:px-6 @xl/main:grid-cols-2 @5xl/main:grid-cols-4">
       <Card className="@container/card">
         <CardHeader>
-          <CardDescription>Messages Exchanged</CardDescription>
+          <CardDescription>Total Agents</CardDescription>
           <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            12,847
+            8
           </CardTitle>
           <CardAction>
             <Badge variant="outline">
               <TrendingUpIcon
               />
-              +18.2%
+              +2
             </Badge>
           </CardAction>
         </CardHeader>
         <CardFooter className="flex-col items-start gap-1.5 text-sm">
           <div className="line-clamp-1 flex gap-2 font-medium">
-            Up 18.2% from last month{" "}
+            2 new agents this month{" "}
             <TrendingUpIcon className="size-4" />
           </div>
           <div className="text-muted-foreground">
-            Across all channels and agents
+            Across 8 roles in the organization
           </div>
         </CardFooter>
       </Card>
       <Card className="@container/card">
         <CardHeader>
-          <CardDescription>Tasks Completed</CardDescription>
+          <CardDescription>Active Agents</CardDescription>
           <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            930
+            3
           </CardTitle>
           <CardAction>
             <Badge variant="outline">
               <TrendingUpIcon
               />
-              +12.5%
+              +1
             </Badge>
           </CardAction>
         </CardHeader>
         <CardFooter className="flex-col items-start gap-1.5 text-sm">
           <div className="line-clamp-1 flex gap-2 font-medium">
-            Up 12.5% from last week{" "}
+            1 more active than yesterday{" "}
             <TrendingUpIcon className="size-4" />
           </div>
           <div className="text-muted-foreground">
-            Across all agent roles
+            3 idle, 2 offline
           </div>
         </CardFooter>
       </Card>
       <Card className="@container/card">
         <CardHeader>
-          <CardDescription>Tokens Consumed</CardDescription>
+          <CardDescription>Models Used</CardDescription>
           <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            2.4M
+            4
           </CardTitle>
           <CardAction>
             <Badge variant="outline">
               <TrendingUpIcon
               />
-              +8.3%
+              +1
             </Badge>
           </CardAction>
         </CardHeader>
         <CardFooter className="flex-col items-start gap-1.5 text-sm">
           <div className="line-clamp-1 flex gap-2 font-medium">
-            Up 8.3% from last week{" "}
+            Added claude-3-haiku this week{" "}
             <TrendingUpIcon className="size-4" />
           </div>
-          <div className="text-muted-foreground">1.6M input, 0.8M output tokens</div>
+          <div className="text-muted-foreground">claude-3.5-sonnet, gpt-4o, gpt-4o-mini, claude-3-haiku</div>
         </CardFooter>
       </Card>
       <Card className="@container/card">
         <CardHeader>
-          <CardDescription>Cost</CardDescription>
+          <CardDescription>Avg Tasks / Agent</CardDescription>
           <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            $142.50
+            116
           </CardTitle>
           <CardAction>
             <Badge variant="outline">
               <TrendingDownIcon
               />
-              -6.2%
+              -3.2%
             </Badge>
           </CardAction>
         </CardHeader>
         <CardFooter className="flex-col items-start gap-1.5 text-sm">
           <div className="line-clamp-1 flex gap-2 font-medium">
-            Down 6.2% from last month{" "}
+            Slightly down from last period{" "}
             <TrendingDownIcon className="size-4" />
           </div>
-          <div className="text-muted-foreground">$ spend across all providers</div>
+          <div className="text-muted-foreground">Top performer: Echo (312 tasks)</div>
         </CardFooter>
       </Card>
     </div>

@@ -158,7 +158,7 @@ const columns: ColumnDef<z.infer<typeof schema>>[] = [
   },
   {
     accessorKey: "header",
-    header: "Task",
+    header: "Member",
     cell: ({ row }) => {
       return <TableCellViewer item={row.original} />
     },
@@ -166,7 +166,7 @@ const columns: ColumnDef<z.infer<typeof schema>>[] = [
   },
   {
     accessorKey: "type",
-    header: "Category",
+    header: "Department",
     cell: ({ row }) => (
       <div className="w-32">
         <Badge variant="outline" className="px-1.5 text-muted-foreground">
@@ -186,13 +186,13 @@ const columns: ColumnDef<z.infer<typeof schema>>[] = [
           <LoaderIcon
           />
         )}
-        {row.original.status}
+        {row.original.status === "Done" ? "Active" : "Pending"}
       </Badge>
     ),
   },
   {
     accessorKey: "target",
-    header: () => <div className="w-full text-right">Priority</div>,
+    header: () => <div className="w-full text-right">Permission</div>,
     cell: ({ row }) => (
       <form
         onSubmit={(e) => {
@@ -217,7 +217,7 @@ const columns: ColumnDef<z.infer<typeof schema>>[] = [
   },
   {
     accessorKey: "limit",
-    header: () => <div className="w-full text-right">Est. Hours</div>,
+    header: () => <div className="w-full text-right">Last Active</div>,
     cell: ({ row }) => (
       <form
         onSubmit={(e) => {
@@ -242,16 +242,16 @@ const columns: ColumnDef<z.infer<typeof schema>>[] = [
   },
   {
     accessorKey: "reviewer",
-    header: "Assigned Agent",
+    header: "Channel Access",
     cell: ({ row }) => {
-      const isAssigned = row.original.reviewer !== "Assign agent"
+      const isAssigned = row.original.reviewer !== "Assign channels"
       if (isAssigned) {
         return row.original.reviewer
       }
       return (
         <>
           <Label htmlFor={`${row.original.id}-reviewer`} className="sr-only">
-            Assigned Agent
+            Allowed Channels
           </Label>
           <Select
             items={[
@@ -266,7 +266,7 @@ const columns: ColumnDef<z.infer<typeof schema>>[] = [
               size="sm"
               id={`${row.original.id}-reviewer`}
             >
-              <SelectValue placeholder="Assign agent" />
+              <SelectValue placeholder="Assign channels" />
             </SelectTrigger>
             <SelectContent align="end">
               <SelectGroup>
@@ -332,7 +332,7 @@ function DraggableRow({ row }: { row: Row<z.infer<typeof schema>> }) {
     </TableRow>
   )
 }
-export function DataTable({
+export function AgentDataTable({
   data: initialData,
 }: {
   data: z.infer<typeof schema>[]
@@ -405,10 +405,10 @@ export function DataTable({
         <Select
           defaultValue="outline"
           items={[
-            { label: "All Tasks", value: "outline" },
+            { label: "All Agents", value: "outline" },
             { label: "Active", value: "past-performance" },
-            { label: "By Agent", value: "key-personnel" },
-            { label: "Flagged", value: "focus-documents" },
+            { label: "By Role", value: "key-personnel" },
+            { label: "Restricted", value: "focus-documents" },
           ]}
         >
           <SelectTrigger
@@ -420,22 +420,22 @@ export function DataTable({
           </SelectTrigger>
           <SelectContent>
             <SelectGroup>
-              <SelectItem value="outline">All Tasks</SelectItem>
+              <SelectItem value="outline">All Agents</SelectItem>
               <SelectItem value="past-performance">Active</SelectItem>
-              <SelectItem value="key-personnel">By Agent</SelectItem>
-              <SelectItem value="focus-documents">Flagged</SelectItem>
+              <SelectItem value="key-personnel">By Role</SelectItem>
+              <SelectItem value="focus-documents">Restricted</SelectItem>
             </SelectGroup>
           </SelectContent>
         </Select>
         <TabsList className="hidden **:data-[slot=badge]:size-5 **:data-[slot=badge]:rounded-full **:data-[slot=badge]:bg-muted-foreground/30 **:data-[slot=badge]:px-1 @4xl/main:flex">
-          <TabsTrigger value="outline">All Tasks</TabsTrigger>
+          <TabsTrigger value="outline">All Agents</TabsTrigger>
           <TabsTrigger value="past-performance">
             Active <Badge variant="secondary">3</Badge>
           </TabsTrigger>
           <TabsTrigger value="key-personnel">
-            By Agent <Badge variant="secondary">8</Badge>
+            By Role <Badge variant="secondary">8</Badge>
           </TabsTrigger>
-          <TabsTrigger value="focus-documents">Flagged</TabsTrigger>
+          <TabsTrigger value="focus-documents">Restricted</TabsTrigger>
         </TabsList>
         <div className="flex items-center gap-2">
           <DropdownMenu>
@@ -473,7 +473,7 @@ export function DataTable({
           <Button variant="outline" size="sm">
             <PlusIcon
             />
-            <span className="hidden lg:inline">Add Section</span>
+            <span className="hidden lg:inline">Add Agent</span>
           </Button>
         </div>
       </div>
@@ -689,7 +689,7 @@ function TableCellViewer({ item }: { item: z.infer<typeof schema> }) {
         <DrawerHeader className="gap-1">
           <DrawerTitle>{item.header}</DrawerTitle>
           <DrawerDescription>
-            Task activity over the last 6 months
+            Member activity and access history
           </DrawerDescription>
         </DrawerHeader>
         <div className="flex flex-col gap-4 overflow-y-auto px-4 text-sm">
@@ -752,12 +752,12 @@ function TableCellViewer({ item }: { item: z.infer<typeof schema> }) {
           )}
           <form className="flex flex-col gap-4">
             <div className="flex flex-col gap-3">
-              <Label htmlFor="header">Task</Label>
+              <Label htmlFor="header">Member Name</Label>
               <Input id="header" defaultValue={item.header} />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="flex flex-col gap-3">
-                <Label htmlFor="type">Category</Label>
+                <Label htmlFor="type">Department</Label>
                 <Select
                   defaultValue={item.type}
                   items={[
@@ -772,7 +772,7 @@ function TableCellViewer({ item }: { item: z.infer<typeof schema> }) {
                   ]}
                 >
                   <SelectTrigger id="type" className="w-full">
-                    <SelectValue placeholder="Select a category" />
+                    <SelectValue placeholder="Select department" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectGroup>
@@ -793,9 +793,9 @@ function TableCellViewer({ item }: { item: z.infer<typeof schema> }) {
                 <Select
                   defaultValue={item.status}
                   items={[
-                    { label: "Done", value: "Done" },
-                    { label: "In Progress", value: "In Progress" },
-                    { label: "Not Started", value: "Not Started" },
+                    { label: "Active", value: "Done" },
+                    { label: "Pending", value: "In Process" },
+                    { label: "Suspended", value: "Not Started" },
                   ]}
                 >
                   <SelectTrigger id="status" className="w-full">
@@ -803,9 +803,9 @@ function TableCellViewer({ item }: { item: z.infer<typeof schema> }) {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectGroup>
-                      <SelectItem value="Done">Done</SelectItem>
-                      <SelectItem value="In Progress">In Progress</SelectItem>
-                      <SelectItem value="Not Started">Not Started</SelectItem>
+                      <SelectItem value="Done">Active</SelectItem>
+                      <SelectItem value="In Process">Pending</SelectItem>
+                      <SelectItem value="Not Started">Suspended</SelectItem>
                     </SelectGroup>
                   </SelectContent>
                 </Select>
@@ -813,45 +813,35 @@ function TableCellViewer({ item }: { item: z.infer<typeof schema> }) {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="flex flex-col gap-3">
-                <Label htmlFor="target">Priority</Label>
-                <Input id="target" defaultValue={item.target} />
+                <Label htmlFor="target">Permission</Label>
+                <Select
+                  defaultValue={item.target}
+                  items={[
+                    { label: "Admin", value: "Admin" },
+                    { label: "Member", value: "Member" },
+                    { label: "Guest", value: "Guest" },
+                  ]}
+                >
+                  <SelectTrigger id="target" className="w-full">
+                    <SelectValue placeholder="Select permission" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="Admin">Admin</SelectItem>
+                      <SelectItem value="Member">Member</SelectItem>
+                      <SelectItem value="Guest">Guest</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
               </div>
               <div className="flex flex-col gap-3">
-                <Label htmlFor="limit">Est. Hours</Label>
-                <Input id="limit" defaultValue={item.limit} />
+                <Label htmlFor="limit">Last Active</Label>
+                <Input id="limit" defaultValue={item.limit} disabled />
               </div>
             </div>
             <div className="flex flex-col gap-3">
-              <Label htmlFor="reviewer">Assigned Agent</Label>
-              <Select
-                defaultValue={item.reviewer}
-                items={[
-                  { label: "Aria", value: "Aria" },
-                  { label: "Rex", value: "Rex" },
-                  { label: "Nova", value: "Nova" },
-                  { label: "Sage", value: "Sage" },
-                  { label: "Lux", value: "Lux" },
-                  { label: "Echo", value: "Echo" },
-                  { label: "Axon", value: "Axon" },
-                  { label: "Kira", value: "Kira" },
-                ]}
-              >
-                <SelectTrigger id="reviewer" className="w-full">
-                  <SelectValue placeholder="Select an agent" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem value="Aria">Aria</SelectItem>
-                    <SelectItem value="Rex">Rex</SelectItem>
-                    <SelectItem value="Nova">Nova</SelectItem>
-                    <SelectItem value="Sage">Sage</SelectItem>
-                    <SelectItem value="Lux">Lux</SelectItem>
-                    <SelectItem value="Echo">Echo</SelectItem>
-                    <SelectItem value="Axon">Axon</SelectItem>
-                    <SelectItem value="Kira">Kira</SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
+              <Label htmlFor="reviewer">Channel Access</Label>
+              <Input id="reviewer" defaultValue={item.reviewer} />
             </div>
           </form>
         </div>

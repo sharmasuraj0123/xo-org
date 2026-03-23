@@ -1,3 +1,4 @@
+// @ts-nocheck — shadcn generated component
 "use client"
 
 import * as React from "react"

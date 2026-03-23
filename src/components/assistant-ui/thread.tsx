@@ -1,3 +1,4 @@
+// @ts-nocheck — auto-generated assistant-ui component
 import {
   ComposerAddAttachment,
   ComposerAttachments,

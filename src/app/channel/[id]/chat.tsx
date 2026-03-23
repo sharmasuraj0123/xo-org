@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   ThreadPrimitive,
   ComposerPrimitive,
@@ -19,7 +20,16 @@ import {
   CheckIcon,
   RefreshCwIcon,
   SquareIcon,
+  TargetIcon,
+  PlusIcon,
+  UserIcon,
+  BotIcon,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { ChannelObjectivePanel } from "@/components/channel-objective-panel";
+import { NewObjectiveDialog } from "@/components/new-objective-dialog";
+import { OBJECTIVES, AGENTS, type Objective } from "@/lib/mock-data";
 import type { FC } from "react";
 
 const agents = [
@@ -66,12 +76,23 @@ const MockChatAdapter: ChatModelAdapter = {
   },
 };
 
+// --- Status dots ---
+const STATUS_DOTS: Record<string, string> = {
+  "On Track": "bg-primary",
+  "At Risk": "bg-amber-400",
+  Behind: "bg-red-400",
+  Completed: "bg-primary",
+  "Not Started": "bg-muted-foreground",
+};
+
 // --- Message components ---
 
-const ChatMessage: FC = () => {
+const ChatMessage: FC<{ onCreateObjective: () => void }> = ({
+  onCreateObjective,
+}) => {
   const role = useAuiState((s) => s.message.role);
   if (role === "user") return <UserMessage />;
-  return <AssistantMessage />;
+  return <AssistantMessage onCreateObjective={onCreateObjective} />;
 };
 
 const UserMessage: FC = () => {
@@ -92,7 +113,9 @@ const UserMessage: FC = () => {
   );
 };
 
-const AssistantMessage: FC = () => {
+const AssistantMessage: FC<{ onCreateObjective: () => void }> = ({
+  onCreateObjective,
+}) => {
   return (
     <MessagePrimitive.Root
       className="group px-4 py-2"
@@ -128,6 +151,13 @@ const AssistantMessage: FC = () => {
                 <RefreshCwIcon className="size-3" />
               </ActionBarPrimitive.Reload>
             </ActionBarPrimitive.Root>
+            <button
+              onClick={onCreateObjective}
+              className="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              title="Create Objective"
+            >
+              <TargetIcon className="size-3" />
+            </button>
           </div>
         </div>
       </div>
@@ -169,9 +199,12 @@ const Composer: FC<{ channelName: string }> = ({ channelName }) => {
   );
 };
 
-// --- Thread ---
+// --- Channel Thread (main chat area) ---
 
-const GroupThread: FC<{ channelName: string }> = ({ channelName }) => {
+const GroupThread: FC<{
+  channelName: string;
+  onCreateObjective: () => void;
+}> = ({ channelName, onCreateObjective }) => {
   return (
     <ThreadPrimitive.Root className="flex h-full flex-col bg-background">
       <ThreadPrimitive.Viewport className="flex flex-1 flex-col overflow-y-scroll scroll-smooth">
@@ -184,13 +217,14 @@ const GroupThread: FC<{ channelName: string }> = ({ channelName }) => {
               #{channelName}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              This is the start of #{channelName}. Send a message to collaborate with agents.
+              This is the start of #{channelName}. Send a message to collaborate
+              with agents.
             </p>
           </div>
         </AuiIf>
 
         <ThreadPrimitive.Messages>
-          {() => <ChatMessage />}
+          {() => <ChatMessage onCreateObjective={onCreateObjective} />}
         </ThreadPrimitive.Messages>
 
         <ThreadPrimitive.ViewportFooter className="sticky bottom-0 mt-auto bg-background px-4 pb-4 pt-2">
@@ -205,9 +239,49 @@ const GroupThread: FC<{ channelName: string }> = ({ channelName }) => {
 
 export function ChannelChat({ channelName }: { channelName: string }) {
   const runtime = useLocalRuntime(MockChatAdapter);
+  const [selectedObjective, setSelectedObjective] = useState<Objective | null>(null);
+  const [objectives, setObjectives] = useState<Objective[]>(
+    OBJECTIVES.filter((o) => o.channelId === channelName)
+  );
+
+  function handleCreateObjectiveFromMessage() {
+    const newObj: Objective = {
+      id: `obj-${Date.now()}`,
+      channelId: channelName,
+      title: "New Objective",
+      humanOwner: "xo",
+      humanOwnerInitials: "XO",
+      aiOwner: AGENTS.find((a) => a.channels.includes(channelName))?.id ?? "aria",
+      status: "Not Started",
+      progress: 0,
+      timePeriod: "Q1 2026",
+      createdAt: "just now",
+      lastActivity: "just now",
+      keyResults: [],
+      skills: [],
+      artifacts: [],
+      instructions: "",
+      parentMessageId: `msg-${Date.now()}`,
+    };
+    setObjectives((prev) => [newObj, ...prev]);
+    setSelectedObjective(newObj);
+  }
+
+  function handleCreateObjective(objective: Objective) {
+    setObjectives((prev) => [objective, ...prev]);
+    setSelectedObjective(objective);
+  }
+
+  function handleUpdateObjective(updated: Objective) {
+    setObjectives((prev) =>
+      prev.map((o) => (o.id === updated.id ? updated : o))
+    );
+    setSelectedObjective(updated);
+  }
 
   return (
     <div className="flex h-[calc(100vh-var(--header-height))] flex-col">
+      {/* Channel Header */}
       <div className="flex items-center gap-3 border-b px-6 py-3">
         <span className="text-sm font-semibold text-foreground">
           #{channelName}
@@ -215,27 +289,87 @@ export function ChannelChat({ channelName }: { channelName: string }) {
         <span className="text-xs text-muted-foreground">
           {agents.length} agents
         </span>
-        <div className="ml-auto flex -space-x-1.5">
-          {agents.slice(0, 4).map((a) => (
-            <div
-              key={a.name}
-              className="flex size-6 items-center justify-center rounded-full border-2 border-background bg-muted text-[9px] font-semibold text-muted-foreground"
-              title={a.name}
-            >
-              {a.initials}
+
+        {/* Objective indicators */}
+        {objectives.length > 0 && (
+          <div className="flex items-center gap-1.5 ml-2">
+            <TargetIcon className="size-3.5 text-muted-foreground" />
+            <div className="flex gap-1">
+              {objectives.slice(0, 3).map((obj) => {
+                const dotColor = STATUS_DOTS[obj.status] ?? "bg-muted-foreground";
+                return (
+                  <button
+                    key={obj.id}
+                    onClick={() => setSelectedObjective(obj)}
+                    className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] transition-colors hover:bg-muted/50 ${
+                      selectedObjective?.id === obj.id
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border text-muted-foreground"
+                    }`}
+                  >
+                    <div className={`size-1.5 rounded-full ${dotColor}`} />
+                    {obj.title.length > 18
+                      ? obj.title.slice(0, 18) + "..."
+                      : obj.title}
+                  </button>
+                );
+              })}
+              {objectives.length > 3 && (
+                <span className="text-[11px] text-muted-foreground self-center">
+                  +{objectives.length - 3} more
+                </span>
+              )}
             </div>
-          ))}
-          {agents.length > 4 && (
-            <div className="flex size-6 items-center justify-center rounded-full border-2 border-background bg-muted text-[9px] font-medium text-muted-foreground">
-              +{agents.length - 4}
-            </div>
-          )}
+          </div>
+        )}
+
+        <div className="ml-auto flex items-center gap-2">
+          <NewObjectiveDialog
+            channelId={channelName}
+            onCreateObjective={handleCreateObjective}
+          >
+            <Button variant="outline" size="sm" className="h-7 text-xs gap-1">
+              <PlusIcon className="size-3" />
+              New Objective
+            </Button>
+          </NewObjectiveDialog>
+          <div className="flex -space-x-1.5">
+            {agents.slice(0, 4).map((a) => (
+              <div
+                key={a.name}
+                className="flex size-6 items-center justify-center rounded-full border-2 border-background bg-muted text-[9px] font-semibold text-muted-foreground"
+                title={a.name}
+              >
+                {a.initials}
+              </div>
+            ))}
+            {agents.length > 4 && (
+              <div className="flex size-6 items-center justify-center rounded-full border-2 border-background bg-muted text-[9px] font-medium text-muted-foreground">
+                +{agents.length - 4}
+              </div>
+            )}
+          </div>
         </div>
       </div>
-      <div className="flex-1 min-h-0">
-        <AssistantRuntimeProvider runtime={runtime}>
-          <GroupThread channelName={channelName} />
-        </AssistantRuntimeProvider>
+
+      {/* Main content: Chat + Objective Panel */}
+      <div className="flex flex-1 min-h-0">
+        <div className="flex-1 min-w-0">
+          <AssistantRuntimeProvider runtime={runtime}>
+            <GroupThread
+              channelName={channelName}
+              onCreateObjective={handleCreateObjectiveFromMessage}
+            />
+          </AssistantRuntimeProvider>
+        </div>
+
+        {selectedObjective && (
+          <ChannelObjectivePanel
+            objective={selectedObjective}
+            onClose={() => setSelectedObjective(null)}
+            onUpdateObjective={handleUpdateObjective}
+          />
+        )}
       </div>
     </div>
   );
