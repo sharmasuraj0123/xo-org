@@ -4,10 +4,8 @@ import { requireAuth } from "../lib/auth"
 import type { TaskStatus } from "../lib/types"
 
 // GET /api/tasks?status=in_progress&assignee=nova
+// No auth required for GET — dashboard and sidebar need to read tasks
 export async function GET(req: Request) {
-  const auth = requireAuth(req)
-  if (auth instanceof Response) return auth
-
   const url = new URL(req.url)
   const status = url.searchParams.get("status") as TaskStatus | null
   const assignee = url.searchParams.get("assignee")

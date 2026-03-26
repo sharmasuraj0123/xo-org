@@ -67,6 +67,35 @@ for (const ch of ["general", "code-review", "design", "devops", "approvals"]) {
   })
 }
 
+// ─── Seed default tasks ─────────────────────────────────────
+const seedTasks: Array<{ title: string; status: TaskStatus; assignee: string; channel: string }> = [
+  { title: "Analyze competitor landscape for Q2", status: "in_progress", assignee: "aria", channel: "general" },
+  { title: "Deploy v2.3.1 to staging", status: "in_progress", assignee: "rex", channel: "devops" },
+  { title: "Code review: auth refactor PR #142", status: "pending_review", assignee: "nova", channel: "code-review" },
+  { title: "Design token audit", status: "assigned", assignee: "lux", channel: "design" },
+  { title: "Security scan on API endpoints", status: "created", assignee: "kira", channel: "approvals" },
+  { title: "Write onboarding documentation", status: "completed", assignee: "aria", channel: "general" },
+  { title: "Migrate session store to PostgreSQL", status: "completed", assignee: "nova", channel: "code-review" },
+]
+
+for (const seed of seedTasks) {
+  const task: Task = {
+    id: nextId("t"),
+    title: seed.title,
+    description: "",
+    status: seed.status,
+    assignee: seed.assignee,
+    createdBy: "system",
+    channel: seed.channel,
+    artifacts: [],
+    ref: nextId("ref"),
+    createdAt: Date.now() - Math.floor(Math.random() * 86400000),
+    updatedAt: Date.now() - Math.floor(Math.random() * 3600000),
+    history: [{ status: "created", by: "system", at: Date.now() }],
+  }
+  tasks.set(task.id, task)
+}
+
 // ─── Agent Operations ────────────────────────────────────────
 
 export function registerAgent(manifest: Partial<AgentManifest>): AgentManifest {
