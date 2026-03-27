@@ -100,3 +100,43 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Failed to read directory" }, { status: 500 })
   }
 }
+
+// Upload files to the workspace
+export async function POST(request: NextRequest) {
+  try {
+    const formData = await request.formData()
+    const file = formData.get("file") as File | null
+    const relativePath = (formData.get("path") as string) || ""
+
+    if (!file) {
+      return NextResponse.json({ error: "No file provided" }, { status: 400 })
+    }
+
+    // Validate path
+    const targetDir = path.resolve(STORAGE_ROOT, relativePath)
+    if (!targetDir.startsWith(path.resolve(STORAGE_ROOT))) {
+      return NextResponse.json({ error: "Access denied" }, { status: 403 })
+    }
+
+    // Ensure directory exists
+    await fs.promises.mkdir(targetDir, { recursive: true })
+
+    // Write file
+    const filePath = path.join(targetDir, file.name)
+    const buffer = Buffer.from(await file.arrayBuffer())
+    await fs.promises.writeFile(filePath, buffer)
+
+    const stat = await fs.promises.stat(filePath)
+
+    return NextResponse.json({
+      ok: true,
+      file: {
+        name: file.name,
+        size: formatSize(stat.size),
+        path: path.join(relativePath, file.name),
+      },
+    })
+  } catch {
+    return NextResponse.json({ error: "Failed to upload file" }, { status: 500 })
+  }
+}

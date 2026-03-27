@@ -63,7 +63,6 @@ function getAgentNav(agentId: string) {
   return [
     { title: "Chat", url: `/agent/${agentId}/chat`, icon: <MessageSquareIcon /> },
     { title: "Dashboard", url: `/agent/${agentId}`, icon: <LayoutDashboardIcon /> },
-    { title: "Objectives", url: `/agent/${agentId}/objectives`, icon: <TargetIcon /> },
   ]
 }
 
