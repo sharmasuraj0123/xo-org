@@ -461,7 +461,7 @@ function ActivityPanel({ agent }: { agent: Agent }) {
             {agent.channels.map((ch) => (
               <a
                 key={ch}
-                href={`/channel/${ch}`}
+                href={`/org/channel/${ch}`}
                 className="inline-flex items-center gap-1 rounded-md bg-muted/80 px-2 py-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
               >
                 <HashIcon className="size-2.5 shrink-0" />

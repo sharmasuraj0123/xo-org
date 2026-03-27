@@ -3,6 +3,7 @@
 import { usePathname, useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { AGENTS, type AgentRole } from "@/lib/mock-data"
+import { getMode, getAgentId } from "@/lib/mode"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,7 +42,51 @@ const STATUS_DOT: Record<string, string> = {
 export function ContextSwitcher() {
   const pathname = usePathname()
   const router = useRouter()
+  const xoMode = getMode()
 
+  // In agent-only mode, show fixed agent identity without dropdown
+  if (xoMode === "agent") {
+    const fixedAgent = AGENTS.find((a) => a.id === getAgentId())
+    if (!fixedAgent) {
+      return (
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton size="lg" className="data-[slot=sidebar-menu-button]:p-1.5!">
+              <XOLogo size={20} />
+              <div className="flex flex-col gap-0.5 leading-none">
+                <span className="text-sm font-semibold">XO Agent</span>
+                <span className="text-xs text-muted-foreground">Standalone</span>
+              </div>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      )
+    }
+
+    const role = ROLE_STYLES[fixedAgent.role]
+    return (
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton size="lg" className="data-[slot=sidebar-menu-button]:p-1.5!">
+            <Avatar className={cn("size-7 rounded-lg", role.bg)}>
+              <AvatarFallback
+                className={cn("rounded-lg text-[10px] font-bold tracking-wide", role.bg, role.text)}
+              >
+                {fixedAgent.name.slice(0, 2).toUpperCase()}
+              </AvatarFallback>
+              <AvatarBadge className={STATUS_DOT[fixedAgent.status]} />
+            </Avatar>
+            <div className="flex flex-col gap-0.5 leading-none">
+              <span className="text-sm font-semibold">{fixedAgent.name}</span>
+              <span className={cn("text-xs", role.text)}>{fixedAgent.role}</span>
+            </div>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      </SidebarMenu>
+    )
+  }
+
+  // Org mode — full dropdown with org + agents
   const isAgentMode = pathname.startsWith("/agent")
   const currentAgentId = isAgentMode ? pathname.split("/")[2] : null
   const currentAgent = currentAgentId
@@ -49,11 +94,10 @@ export function ContextSwitcher() {
     : null
 
   function handleSelectOrg() {
-    router.push("/")
+    router.push("/org")
   }
 
   function handleSelectAgent(agentId: string) {
-    // Navigate to same sub-page for the new agent, or default to chat
     const subPage = pathname.split("/").slice(3).join("/") || "chat"
     router.push(`/agent/${agentId}/${subPage}`)
   }

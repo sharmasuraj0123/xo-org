@@ -19,6 +19,7 @@ import {
   CircleHelpIcon,
   KeyboardIcon,
 } from "lucide-react";
+import { getMode } from "@/lib/mode";
 
 type CommandPaletteProps = {
   open: boolean;
@@ -38,6 +39,8 @@ export function CommandPalette({
     fn();
   };
 
+  const isOrg = getMode() === "org";
+
   return (
     <CommandDialog
       open={open}
@@ -51,21 +54,25 @@ export function CommandPalette({
           <CommandEmpty>No results found.</CommandEmpty>
 
           <CommandGroup heading="Pages">
-            <CommandItem onSelect={() => runCommand(() => onNavigate("/"))}>
+            <CommandItem onSelect={() => runCommand(() => onNavigate(isOrg ? "/org" : "/agent"))}>
               <LayoutDashboardIcon />
               <span>Dashboard</span>
               <span className="ml-auto text-xs text-muted-foreground">G D</span>
             </CommandItem>
-            <CommandItem onSelect={() => runCommand(() => onNavigate("#agents"))}>
-              <UsersIcon />
-              <span>Agents</span>
-              <span className="ml-auto text-xs text-muted-foreground">G A</span>
-            </CommandItem>
-            <CommandItem onSelect={() => runCommand(() => onNavigate("/objectives"))}>
-              <TargetIcon />
-              <span>Objectives</span>
-              <span className="ml-auto text-xs text-muted-foreground">G O</span>
-            </CommandItem>
+            {isOrg && (
+              <CommandItem onSelect={() => runCommand(() => onNavigate("/org/agents"))}>
+                <UsersIcon />
+                <span>Agents</span>
+                <span className="ml-auto text-xs text-muted-foreground">G A</span>
+              </CommandItem>
+            )}
+            {isOrg && (
+              <CommandItem onSelect={() => runCommand(() => onNavigate("/org/objectives"))}>
+                <TargetIcon />
+                <span>Objectives</span>
+                <span className="ml-auto text-xs text-muted-foreground">G O</span>
+              </CommandItem>
+            )}
             <CommandItem onSelect={() => runCommand(() => onNavigate("#settings"))}>
               <Settings2Icon />
               <span>Settings</span>
@@ -73,29 +80,32 @@ export function CommandPalette({
             </CommandItem>
           </CommandGroup>
 
-          <CommandSeparator />
-
-          <CommandGroup heading="Channels">
-            <CommandItem onSelect={() => runCommand(() => onNavigate("/channel/general"))}>
-              <HashIcon />
-              <span>general</span>
-              <span className="ml-auto text-xs text-muted-foreground">G 1</span>
-            </CommandItem>
-            <CommandItem onSelect={() => runCommand(() => onNavigate("/channel/code-review"))}>
-              <HashIcon />
-              <span>code-review</span>
-              <span className="ml-auto text-xs text-muted-foreground">G 2</span>
-            </CommandItem>
-            <CommandItem onSelect={() => runCommand(() => onNavigate("/channel/design"))}>
-              <HashIcon />
-              <span>design</span>
-              <span className="ml-auto text-xs text-muted-foreground">G 3</span>
-            </CommandItem>
-            <CommandItem onSelect={() => runCommand(() => onNavigate("/channel/approvals"))}>
-              <HashIcon />
-              <span>approvals</span>
-            </CommandItem>
-          </CommandGroup>
+          {isOrg && (
+            <>
+              <CommandSeparator />
+              <CommandGroup heading="Channels">
+                <CommandItem onSelect={() => runCommand(() => onNavigate("/org/channel/general"))}>
+                  <HashIcon />
+                  <span>general</span>
+                  <span className="ml-auto text-xs text-muted-foreground">G 1</span>
+                </CommandItem>
+                <CommandItem onSelect={() => runCommand(() => onNavigate("/org/channel/code-review"))}>
+                  <HashIcon />
+                  <span>code-review</span>
+                  <span className="ml-auto text-xs text-muted-foreground">G 2</span>
+                </CommandItem>
+                <CommandItem onSelect={() => runCommand(() => onNavigate("/org/channel/design"))}>
+                  <HashIcon />
+                  <span>design</span>
+                  <span className="ml-auto text-xs text-muted-foreground">G 3</span>
+                </CommandItem>
+                <CommandItem onSelect={() => runCommand(() => onNavigate("/org/channel/approvals"))}>
+                  <HashIcon />
+                  <span>approvals</span>
+                </CommandItem>
+              </CommandGroup>
+            </>
+          )}
 
           <CommandSeparator />
 

@@ -14,7 +14,6 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupLabel,
-  SidebarHeader,
   SidebarMenu,
   SidebarMenuAction,
   SidebarMenuButton,
@@ -22,6 +21,7 @@ import {
 } from "@/components/ui/sidebar"
 import { cn } from "@/lib/utils"
 import { getSessionMeta, ensureSessionMeta, clearSessionMessages } from "@/lib/session-store"
+import { getMode, getAgentId } from "@/lib/mode"
 import {
   LayoutDashboardIcon,
   TargetIcon,
@@ -44,6 +44,9 @@ import {
   PlusIcon,
   Trash2Icon,
   SquareIcon,
+  HardDriveIcon,
+  FileChartColumnIcon,
+  BookOpenIcon,
 } from "lucide-react"
 
 // ─── Backend task type ──────────────────────────────────────
@@ -70,29 +73,37 @@ const TASK_STATUS_ICON: Record<string, React.ReactNode> = {
   stopped: <SquareIcon className="size-3 text-amber-400" />,
 }
 
+const mode = getMode()
+
+const orgNav = [
+  { title: "Dashboard", url: "/org", icon: <LayoutDashboardIcon /> },
+  { title: "Agents", url: "/org/agents", icon: <UsersIcon /> },
+  { title: "Objectives", url: "/org/objectives", icon: <TargetIcon /> },
+]
+
+const agentSoloNav = [
+  { title: "Chat", url: "/agent/chat", icon: <MessageSquareIcon /> },
+  { title: "Dashboard", url: "/agent", icon: <LayoutDashboardIcon /> },
+]
+
+function getAgentDetailNav(agentId: string) {
+  return [
+    { title: "Chat", url: `/agent/${agentId}/chat`, icon: <MessageSquareIcon /> },
+    { title: "Dashboard", url: `/agent/${agentId}`, icon: <LayoutDashboardIcon /> },
+    { title: "Objectives", url: `/agent/${agentId}/objectives`, icon: <TargetIcon /> },
+  ]
+}
+
 const data = {
   user: {
     name: "xo",
     email: "admin@xo.dev",
     avatar: "",
   },
-  orgNav: [
-    { title: "Dashboard", url: "/", icon: <LayoutDashboardIcon /> },
-    { title: "Agents", url: "/agents", icon: <UsersIcon /> },
-    { title: "Objectives", url: "/objectives", icon: <TargetIcon /> },
-  ],
   navSecondary: [
     { title: "Settings", url: "#", icon: <Settings2Icon /> },
     { title: "Get Help", url: "#", icon: <CircleHelpIcon /> },
   ],
-}
-
-function getAgentNav(agentId: string) {
-  return [
-    { title: "Chat", url: `/agent/${agentId}/chat`, icon: <MessageSquareIcon /> },
-    { title: "Dashboard", url: `/agent/${agentId}`, icon: <LayoutDashboardIcon /> },
-    { title: "Objectives", url: `/agent/${agentId}/objectives`, icon: <TargetIcon /> },
-  ]
 }
 
 // ─── Backend hooks ──────────────────────────────────────────
@@ -111,7 +122,6 @@ function useBackendSessions() {
 
   useEffect(() => {
     refresh()
-    // Poll every 10s for session changes
     const interval = setInterval(refresh, 10000)
     return () => clearInterval(interval)
   }, [refresh])
@@ -217,33 +227,77 @@ function useWorkspaceEntries() {
   return entries
 }
 
+// ─── Determine sidebar mode ─────────────────────────────────
+
+type SidebarMode = "org" | "agent-solo" | "agent-detail"
+
+function useSidebarMode(): { sidebarMode: SidebarMode; agentId: string | null } {
+  const pathname = usePathname()
+  const isOnAgentRoute = pathname.startsWith("/agent")
+
+  if (mode === "agent") {
+    // Agent-only deployment — always solo mode
+    return { sidebarMode: "agent-solo", agentId: getAgentId() }
+  }
+
+  // Org mode — check if we're viewing a specific agent
+  if (isOnAgentRoute) {
+    // Extract agent ID from /agent/[id]/... pattern
+    const segments = pathname.split("/")
+    const potentialId = segments[2]
+    // If there's an ID segment and it's not a solo route keyword
+    if (potentialId && !["chat", "objectives", "storage", "reports", "docs"].includes(potentialId)) {
+      return { sidebarMode: "agent-detail", agentId: potentialId }
+    }
+  }
+
+  return { sidebarMode: "org", agentId: null }
+}
+
 // ─── Component ──────────────────────────────────────────────
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-  const pathname = usePathname()
   const router = useRouter()
-  const isAgentMode = pathname.startsWith("/agent")
-  const agentId = isAgentMode ? pathname.split("/")[2] : null
+  const { sidebarMode, agentId } = useSidebarMode()
   const { sessions, createSession, deleteSession } = useBackendSessions()
   const tasks = useBackendTasks()
   const workspaceEntries = useWorkspaceEntries()
 
-  // Get the default agent id for session chat links
-  const defaultAgentId = agentId || "aria"
+  const defaultAgentId = agentId || getAgentId()
 
-  const navItems = isAgentMode && agentId
-    ? getAgentNav(agentId)
-    : data.orgNav
+  // Build nav items based on mode
+  let navItems
+  if (sidebarMode === "agent-detail" && agentId) {
+    navItems = getAgentDetailNav(agentId)
+  } else if (sidebarMode === "agent-solo") {
+    navItems = agentSoloNav
+  } else {
+    navItems = orgNav
+  }
+
+  // Build session chat link based on mode
+  const sessionChatUrl = (sessionId: string) => {
+    if (sidebarMode === "agent-solo") {
+      return `/agent/chat?session=${sessionId}`
+    }
+    return `/agent/${defaultAgentId}/chat?session=${sessionId}`
+  }
+
+  // Build storage link based on mode
+  const storagePath = (entryName: string) => {
+    if (sidebarMode === "agent-solo") {
+      return `/agent/storage?path=${encodeURIComponent(entryName)}`
+    }
+    return `/org/storage?path=${encodeURIComponent(entryName)}`
+  }
 
   const activeTasks = tasks.filter((t) => t.status === "running" || t.status === "queued" || t.status === "pending")
   const completedTasks = tasks.filter((t) => t.status === "completed")
 
   return (
     <Sidebar collapsible="offcanvas" {...props}>
-      <SidebarHeader>
-        <ContextSwitcher />
-      </SidebarHeader>
       <SidebarContent>
+        <ContextSwitcher />
         <NavMain items={navItems} />
 
         {/* Folders */}
@@ -253,8 +307,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             {workspaceEntries.map((entry) => {
               const Icon = getEntryIcon(entry)
               const url = entry.type === "folder"
-                ? `/storage?path=${encodeURIComponent(entry.name)}`
-                : `/storage`
+                ? storagePath(entry.name)
+                : sidebarMode === "agent-solo" ? "/agent/storage" : "/org/storage"
               return (
                 <SidebarMenuItem key={entry.name}>
                   <SidebarMenuButton render={<a href={url} />}>
@@ -284,7 +338,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 const id = await createSession()
                 if (id) {
                   ensureSessionMeta(id)
-                  router.push(`/agent/${defaultAgentId}/chat?session=${id}`)
+                  router.push(sessionChatUrl(id))
                 }
               }}
               className="ml-auto flex size-5 items-center justify-center rounded-md text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
@@ -305,13 +359,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             {sessions.map((sessionId) => {
               const meta = getSessionMeta(sessionId)
               const title = meta?.title || "New session"
-              const isActive = pathname.includes(`session=${sessionId}`)
               return (
                 <SidebarMenuItem key={sessionId}>
                   <SidebarMenuButton
-                    className={cn("h-auto py-1.5", isActive && "bg-sidebar-accent")}
+                    className="h-auto py-1.5"
                     render={
-                      <a href={`/agent/${defaultAgentId}/chat?session=${sessionId}`} />
+                      <a href={sessionChatUrl(sessionId)} />
                     }
                   >
                     <MessageSquareIcon className="size-3 text-primary shrink-0" />
