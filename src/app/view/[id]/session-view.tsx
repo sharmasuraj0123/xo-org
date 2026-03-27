@@ -17,6 +17,7 @@ import {
   LoaderIcon,
   WrenchIcon,
   ChevronUpIcon,
+  ArchiveIcon,
 } from "lucide-react"
 
 // ─── Types ────────────────────────────────────────────────────
@@ -277,11 +278,12 @@ const LOAD_MORE = 50
 
 // ─── Main component ───────────────────────────────────────────
 
-export function SessionView({ sessionId }: { sessionId: string }) {
+export function SessionView({ sessionId, archivedFileId }: { sessionId: string; archivedFileId?: string }) {
   // All messages fetched from Gateway (initial load = 40, then +50 each scroll-up)
   const [allMessages, setAllMessages] = useState<GatewayMessage[]>([])
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const [sessionKey, setSessionKey] = useState<string | null>(null)
+  const [isArchived, setIsArchived] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -320,15 +322,75 @@ export function SessionView({ sessionId }: { sessionId: string }) {
 
   // Initial load — fetch last 200 messages but only show 40
   useEffect(() => {
+    // If an archivedFileId is provided, load directly from the archived file
+    if (archivedFileId) {
+      setIsArchived(true)
+      fetch(`/api/openclaw/sessions/archived/${encodeURIComponent(archivedFileId)}/history?limit=200`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.error) throw new Error(data.error)
+          const msgs = (data.messages ?? []).filter((m: GatewayMessage) => {
+            if (m.role === "assistant") {
+              return (
+                m.content.some((c) => c.type === "text" && c.text?.trim()) ||
+                m.content.some((c) => c.type === "toolCall")
+              )
+            }
+            if (m.role === "toolResult") return extractText(m.content).length > 0
+            return true
+          })
+          setAllMessages(msgs)
+          setSessionKey(archivedFileId)
+          setVisibleCount(PAGE_SIZE)
+          setError(null)
+        })
+        .catch((e: Error) => setError(e.message))
+        .finally(() => setLoading(false))
+      return
+    }
+
+    // Otherwise try active sessions first, then fall back to archived
     fetch("/api/openclaw/sessions")
       .then((r) => r.json())
-      .then((data) => {
+      .then(async (data) => {
         const session = data.sessions?.find(
           (s: { sessionId: string; key: string }) => s.sessionId === sessionId
         )
-        if (!session) throw new Error(`Session ${sessionId} not found`)
-        setSessionKey(session.key)
-        return loadMessages(session.key, 200)
+        if (session) {
+          setSessionKey(session.key)
+          setIsArchived(false)
+          return loadMessages(session.key, 200)
+        }
+
+        // Not found in active — search archived sessions
+        const archivedRes = await fetch("/api/openclaw/sessions/archived")
+        const archivedData = await archivedRes.json()
+        const archivedSession = archivedData.archived?.find(
+          (s: { sessionId: string | null; fileId: string }) => s.sessionId === sessionId
+        )
+
+        if (archivedSession) {
+          setIsArchived(true)
+          setSessionKey(archivedSession.fileId)
+          const histRes = await fetch(
+            `/api/openclaw/sessions/archived/${encodeURIComponent(archivedSession.fileId)}/history?limit=200`
+          )
+          const histData = await histRes.json()
+          if (histData.error) throw new Error(histData.error)
+          const msgs = (histData.messages ?? []).filter((m: GatewayMessage) => {
+            if (m.role === "assistant") {
+              return (
+                m.content.some((c) => c.type === "text" && c.text?.trim()) ||
+                m.content.some((c) => c.type === "toolCall")
+              )
+            }
+            if (m.role === "toolResult") return extractText(m.content).length > 0
+            return true
+          })
+          return msgs
+        }
+
+        throw new Error(`Session ${sessionId} not found`)
       })
       .then((msgs) => {
         setAllMessages(msgs)
@@ -337,7 +399,7 @@ export function SessionView({ sessionId }: { sessionId: string }) {
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false))
-  }, [sessionId, loadMessages])
+  }, [sessionId, archivedFileId, loadMessages])
 
   // Scroll to bottom after initial load
   useEffect(() => {
@@ -390,6 +452,12 @@ export function SessionView({ sessionId }: { sessionId: string }) {
         <span className="font-mono truncate max-w-[320px]" title={sessionKey ?? sessionId}>
           {sessionKey ?? sessionId}
         </span>
+        {isArchived && (
+          <span className="flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-400/80">
+            <ArchiveIcon className="size-2.5" />
+            archived
+          </span>
+        )}
         <div className="ml-auto flex items-center gap-3">
           {userTurns > 0 && (
             <span className="flex items-center gap-1">
