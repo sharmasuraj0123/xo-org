@@ -111,7 +111,7 @@ export function NewObjectiveDialog({
 
   return (
     <>
-      {React.cloneElement(children, {
+      {React.cloneElement(children as React.ReactElement<{ onClick?: () => void }>, {
         onClick: () => setOpen(true),
       })}
       <Dialog open={open} onOpenChange={setOpen}>
@@ -157,7 +157,7 @@ export function NewObjectiveDialog({
                   <BotIcon className="size-3 text-primary" />
                   AI Owner
                 </Label>
-                <Select value={aiOwner} onValueChange={setAiOwner}>
+                <Select value={aiOwner} onValueChange={(v) => setAiOwner(v ?? "")}>
                   <SelectTrigger className="h-9">
                     <SelectValue placeholder="Select agent" />
                   </SelectTrigger>
@@ -182,7 +182,7 @@ export function NewObjectiveDialog({
             {/* Time Period */}
             <div className="flex flex-col gap-1.5">
               <Label className="text-xs">Time Period</Label>
-              <Select value={timePeriod} onValueChange={setTimePeriod}>
+              <Select value={timePeriod} onValueChange={(v) => setTimePeriod(v ?? "")}>
                 <SelectTrigger className="h-9">
                   <SelectValue />
                 </SelectTrigger>

@@ -9,7 +9,10 @@ import { NextRequest, NextResponse } from "next/server"
  *        /api/proxy?path=/health
  */
 
-const BACKEND_URL = process.env.XO_BACKEND_URL || "http://localhost:8000"
+const mode = process.env.NEXT_PUBLIC_XO_MODE || "org"
+const BACKEND_URL = mode === "agent"
+  ? (process.env.XO_AGENT_BACKEND_URL || process.env.XO_BACKEND_URL || "http://localhost:8000")
+  : (process.env.XO_BACKEND_URL || "http://localhost:8000")
 
 export async function GET(request: NextRequest) {
   const backendPath = request.nextUrl.searchParams.get("path") || "/health"
