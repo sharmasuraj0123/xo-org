@@ -55,8 +55,8 @@ server.on("upgrade", (req, socket, head) => {
       if (clientWs.readyState === WebSocket.OPEN) clientWs.send(data, { binary: isBinary })
     })
 
-    clientWs.on("close", (code, reason) => gwWs.close(code, reason))
-    gwWs.on("close", (code, reason) => clientWs.close(code, reason))
+    clientWs.on("close", () => { try { gwWs.close(1000) } catch {} })
+    gwWs.on("close", () => { try { clientWs.close(1000) } catch {} })
 
     clientWs.on("error", () => gwWs.close())
     gwWs.on("error", () => clientWs.close())
