@@ -820,6 +820,12 @@ export function AgentChat({ agent, sessionId }: { agent: Agent; sessionId?: stri
   const [pendingText, setPendingText] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
+  const messagesCountRef = useRef(0)
+
+  // Keep ref in sync so the send closure always sees the latest count
+  useEffect(() => {
+    messagesCountRef.current = messages.length
+  }, [messages.length])
 
   const handleSend = async (text: string) => {
     if (!activeSessionKey) return
@@ -837,12 +843,13 @@ export function AgentChat({ agent, sessionId }: { agent: Agent; sessionId?: stri
       if (!res.ok || !data.ok) {
         throw new Error(data.error ?? `HTTP ${res.status}`)
       }
-      // Give the agent a moment to respond, then start polling aggressively
-      await new Promise((r) => setTimeout(r, 800))
-      // Poll a few extra times quickly to catch the reply
-      for (let i = 0; i < 8; i++) {
+      // Fire-and-forget: poll until we see a new message (up to ~90s)
+      const prevCount = messagesCountRef.current
+      await new Promise((r) => setTimeout(r, 1000))
+      for (let i = 0; i < 45; i++) {
         await refetch(true)
-        await new Promise((r) => setTimeout(r, 1500))
+        if (messagesCountRef.current > prevCount) break
+        await new Promise((r) => setTimeout(r, 2000))
       }
     } catch (e) {
       setSendError(e instanceof Error ? e.message : String(e))

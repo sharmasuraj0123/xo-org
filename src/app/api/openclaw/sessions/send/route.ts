@@ -35,7 +35,10 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const res = await fetch(`${GATEWAY_URL}/tools/invoke`, {
+    // sessions_send blocks until the agent finishes its full turn (can be 30s+).
+    // We fire the request without awaiting completion — the frontend polls
+    // /history to observe the reply as it arrives.
+    fetch(`${GATEWAY_URL}/tools/invoke`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${GATEWAY_TOKEN}`,
@@ -45,30 +48,18 @@ export async function POST(request: NextRequest) {
         tool: "sessions_send",
         args: { sessionKey, message: message.trim() },
       }),
-      signal: AbortSignal.timeout(10000),
+      // Long timeout to allow the agent to finish, but we don't await it
+      signal: AbortSignal.timeout(120000),
+    }).catch(() => {
+      // Silently ignore — client polls history for the result
     })
 
-    if (!res.ok) {
-      return NextResponse.json(
-        { error: `Gateway returned ${res.status}` },
-        { status: 502 }
-      )
-    }
-
-    const data = await res.json() as { ok: boolean; error?: string; result?: unknown }
-
-    if (!data.ok) {
-      return NextResponse.json(
-        { error: data.error ?? "Gateway error" },
-        { status: 502 }
-      )
-    }
-
-    return NextResponse.json({ ok: true, result: data.result })
+    // Return immediately so the UI can start polling
+    return NextResponse.json({ ok: true, queued: true })
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
+    const detail = err instanceof Error ? err.message : String(err)
     return NextResponse.json(
-      { error: "Failed to reach OpenClaw Gateway", detail: message },
+      { error: "Failed to dispatch message", detail },
       { status: 502 }
     )
   }
