@@ -269,8 +269,9 @@ const AgentComposer: FC<{
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col rounded-2xl border border-border bg-card p-1 shadow-sm">
+    <div suppressHydrationWarning className="mx-auto flex w-full max-w-3xl flex-col rounded-2xl border border-border bg-card p-1 shadow-sm">
       <textarea
+        suppressHydrationWarning
         ref={textareaRef}
         value={text}
         onChange={handleInput}
@@ -284,6 +285,7 @@ const AgentComposer: FC<{
       <div className="flex items-center justify-between px-2 pb-1">
         <div className="flex items-center gap-1">
           <button
+            suppressHydrationWarning
             type="button"
             className="flex size-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted transition-colors"
           >
@@ -293,6 +295,7 @@ const AgentComposer: FC<{
         <div className="flex items-center gap-2">
           {isRunning ? (
             <button
+              suppressHydrationWarning
               type="button"
               onClick={onAbort}
               className="flex size-8 items-center justify-center rounded-lg bg-destructive text-white transition-colors hover:bg-destructive/90"
@@ -302,6 +305,7 @@ const AgentComposer: FC<{
             </button>
           ) : (
             <button
+              suppressHydrationWarning
               type="button"
               onClick={handleSend}
               disabled={!canSend}
