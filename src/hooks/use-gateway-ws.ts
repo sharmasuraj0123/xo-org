@@ -111,7 +111,16 @@ async function bootstrap() {
     const res = await fetch("/api/openclaw/ws-token")
     if (!res.ok) throw new Error("Failed to fetch WS token")
     const data = await res.json() as { url: string; token: string }
-    _wsUrl = data.url
+
+    // "__RELATIVE__" means use the same-origin WS proxy path
+    if (data.url === "__RELATIVE__") {
+      const loc = window.location
+      const wsScheme = loc.protocol === "https:" ? "wss:" : "ws:"
+      _wsUrl = `${wsScheme}//${loc.host}/api/gateway/ws`
+    } else {
+      _wsUrl = data.url
+    }
+
     _token = data.token
     connect()
   } catch (e) {
