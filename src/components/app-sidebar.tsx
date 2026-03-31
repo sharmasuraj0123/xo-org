@@ -5,13 +5,10 @@ import { useState, useEffect, useCallback, useRef } from "react"
 import { usePathname, useRouter } from "next/navigation"
 
 import { NavMain } from "@/components/nav-main"
-import { NavSecondary } from "@/components/nav-secondary"
-import { NavUser } from "@/components/nav-user"
 import { ContextSwitcher } from "@/components/xo/context-switcher"
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
   SidebarGroupLabel,
   SidebarHeader,
@@ -20,6 +17,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
 import { cn } from "@/lib/utils"
+import { getMode, getAgentId } from "@/lib/mode"
 import {
   LayoutDashboardIcon,
   TargetIcon,
@@ -38,31 +36,34 @@ import {
   PlusIcon,
   ArchiveIcon,
   ChevronDownIcon,
+  LinkIcon,
 } from "lucide-react"
 
 // ─── Static nav data ─────────────────────────────────────────
 
-const data = {
-  user: {
-    name: "xo",
-    email: "admin@xo.dev",
-    avatar: "",
-  },
-  orgNav: [
-    { title: "Dashboard", url: "/", icon: <LayoutDashboardIcon /> },
-    { title: "Agents", url: "/agents", icon: <UsersIcon /> },
-    { title: "Objectives", url: "/objectives", icon: <TargetIcon /> },
-  ],
-  navSecondary: [
-    { title: "Settings", url: "#", icon: <Settings2Icon /> },
-    { title: "Get Help", url: "#", icon: <CircleHelpIcon /> },
-  ],
-}
+const mode = getMode()
 
-function getAgentNav(agentId: string) {
+const orgNav = [
+  { title: "Dashboard", url: "/org", icon: <LayoutDashboardIcon /> },
+  { title: "Agents", url: "/org/agents", icon: <UsersIcon /> },
+  { title: "Objectives", url: "/org/objectives", icon: <TargetIcon /> },
+]
+
+const agentSoloNav = [
+  { title: "Chat", url: "/agent/chat", icon: <MessageSquareIcon /> },
+  { title: "Dashboard", url: "/agent", icon: <LayoutDashboardIcon /> },
+  { title: "Objectives", url: "/agent/objectives", icon: <TargetIcon /> },
+  { title: "Connections", url: "/agent/connections", icon: <LinkIcon /> },
+  { title: "Settings", url: "/agent/settings", icon: <Settings2Icon /> },
+]
+
+function getAgentDetailNav(agentId: string) {
   return [
     { title: "Chat", url: `/agent/${agentId}/chat`, icon: <MessageSquareIcon /> },
     { title: "Dashboard", url: `/agent/${agentId}`, icon: <LayoutDashboardIcon /> },
+    { title: "Objectives", url: `/agent/${agentId}/objectives`, icon: <TargetIcon /> },
+    { title: "Connections", url: `/agent/${agentId}/connections`, icon: <LinkIcon /> },
+    { title: "Settings", url: `/agent/${agentId}/settings`, icon: <Settings2Icon /> },
   ]
 }
 
@@ -137,7 +138,6 @@ function useGatewaySessions() {
   const [sessions, setSessions] = useState<GatewaySession[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  // Use a ref to track if we've done the initial load
   const initialLoad = useRef(true)
 
   const refresh = useCallback((silent = false) => {
@@ -157,11 +157,8 @@ function useGatewaySessions() {
   }, [])
 
   useEffect(() => {
-    // Initial load
     refresh(false)
     initialLoad.current = false
-
-    // Silent background poll every 15s (matches Gateway tick interval)
     const interval = setInterval(() => refresh(true), 15000)
     return () => clearInterval(interval)
   }, [refresh])
@@ -220,21 +217,60 @@ function getEntryIcon(entry: FSEntry) {
   }
 }
 
+// ─── Determine sidebar mode ─────────────────────────────────
+
+type SidebarMode = "org" | "agent-solo" | "agent-detail"
+
+function useSidebarMode(): { sidebarMode: SidebarMode; agentId: string | null } {
+  const pathname = usePathname()
+  const isOnAgentRoute = pathname.startsWith("/agent")
+
+  if (mode === "agent") {
+    return { sidebarMode: "agent-solo", agentId: getAgentId() }
+  }
+
+  if (isOnAgentRoute) {
+    const segments = pathname.split("/")
+    const potentialId = segments[2]
+    if (potentialId && !["chat", "objectives", "storage", "reports", "docs"].includes(potentialId)) {
+      return { sidebarMode: "agent-detail", agentId: potentialId }
+    }
+  }
+
+  return { sidebarMode: "org", agentId: null }
+}
+
 // ─── Sidebar component ────────────────────────────────────────
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname()
   const router = useRouter()
-  const isAgentMode = pathname.startsWith("/agent")
-  const agentId = isAgentMode ? pathname.split("/")[2] : null
-  const defaultAgentId = agentId || "aria"
+  const { sidebarMode, agentId } = useSidebarMode()
 
   const { sessions, loading: sessionsLoading, error: sessionsError } = useGatewaySessions()
   const workspaceEntries = useWorkspaceEntries()
   const { archived, loading: archivedLoading, load: loadArchived, loaded: archivedLoaded } = useArchivedSessions()
   const [showArchived, setShowArchived] = useState(false)
 
-  const navItems = isAgentMode && agentId ? getAgentNav(agentId) : data.orgNav
+  const defaultAgentId = agentId || getAgentId()
+
+  // Build nav items based on mode
+  let navItems
+  if (sidebarMode === "agent-detail" && agentId) {
+    navItems = getAgentDetailNav(agentId)
+  } else if (sidebarMode === "agent-solo") {
+    navItems = agentSoloNav
+  } else {
+    navItems = orgNav
+  }
+
+  // Build storage link based on mode
+  const storagePath = (entryName: string) => {
+    if (sidebarMode === "agent-solo") {
+      return `/agent/storage?path=${encodeURIComponent(entryName)}`
+    }
+    return `/org/storage?path=${encodeURIComponent(entryName)}`
+  }
 
   return (
     <Sidebar collapsible="offcanvas" {...props}>
@@ -243,6 +279,34 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
 
       <SidebarContent>
+        {/* Search */}
+        <SidebarGroup className="group-data-[collapsible=icon]:hidden px-2 pt-1 pb-0">
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                className="text-sidebar-foreground/50 hover:text-sidebar-foreground/70"
+                tooltip="Search"
+                onClick={() =>
+                  window.dispatchEvent(
+                    new KeyboardEvent("keydown", {
+                      key: "k",
+                      code: "KeyK",
+                      metaKey: true,
+                      bubbles: true,
+                    })
+                  )
+                }
+              >
+                <CommandIcon className="size-4" />
+                <span>Search</span>
+                <kbd className="ml-auto inline-flex h-5 items-center gap-0.5 rounded border border-sidebar-border bg-sidebar-accent px-1.5 text-[10px] font-medium text-sidebar-foreground/50">
+                  ⌘K
+                </kbd>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroup>
+
         <NavMain items={navItems} />
 
         {/* Workspace Folders */}
@@ -259,8 +323,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             ) : workspaceEntries.map((entry) => {
               const Icon = getEntryIcon(entry)
               const url = entry.type === "folder"
-                ? `/storage?path=${encodeURIComponent(entry.name)}`
-                : `/storage`
+                ? storagePath(entry.name)
+                : sidebarMode === "agent-solo" ? "/agent/storage" : "/org/storage"
               return (
                 <SidebarMenuItem key={entry.name}>
                   <SidebarMenuButton render={<a href={url} />}>
@@ -285,9 +349,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             {/* New Session button */}
             <button
               onClick={() => {
-                // Sessions are created automatically when the first message is
-                // sent via the OpenClaw Gateway. Navigate to agent chat which
-                // will create a new session on first message.
                 router.push(`/agent/${defaultAgentId}/chat`)
               }}
               className="ml-auto flex size-5 items-center justify-center rounded-md text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
@@ -411,13 +472,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               )}
 
               {archived.map((session) => {
-                // Build a display label
                 const label = session.origin?.label
                   || session.origin?.provider
                   || session.sessionKey?.split(":").at(-1)
                   || session.fileName.split(".")[0].slice(0, 8)
 
-                // Parse archivedAt for display
                 let timeStr = ""
                 try {
                   const d = new Date(session.archivedAt.replace(/-(\d{2})-(\d{2})\.(\d{3}Z)$/, ":$1:$2.$3"))
@@ -431,7 +490,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
                 const sizeMb = (session.sizeBytes / (1024 * 1024)).toFixed(1)
 
-                // Link: use sessionId if available, else use fileId as a fallback slug
                 const href = session.sessionId
                   ? `/view/${session.sessionId}?archived=${encodeURIComponent(session.fileId)}`
                   : `/view/${encodeURIComponent(session.fileId)}?archived=${encodeURIComponent(session.fileId)}`
@@ -461,40 +519,18 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           )}
         </SidebarGroup>
 
-        <NavSecondary items={data.navSecondary} className="mt-auto" />
-
-        {/* Command Palette shortcut */}
-        <SidebarGroup className="group-data-[collapsible=icon]:hidden px-2 pb-1">
+        {/* Get Help */}
+        <SidebarGroup className="mt-auto group-data-[collapsible=icon]:hidden">
           <SidebarMenu>
             <SidebarMenuItem>
-              <SidebarMenuButton
-                className="text-sidebar-foreground/50 hover:text-sidebar-foreground/70"
-                tooltip="Command Palette"
-                onClick={() =>
-                  window.dispatchEvent(
-                    new KeyboardEvent("keydown", {
-                      key: "k",
-                      code: "KeyK",
-                      metaKey: true,
-                      bubbles: true,
-                    })
-                  )
-                }
-              >
-                <CommandIcon className="size-4" />
-                <span>Command</span>
-                <kbd className="ml-auto inline-flex h-5 items-center gap-0.5 rounded border border-sidebar-border bg-sidebar-accent px-1.5 text-[10px] font-medium text-sidebar-foreground/50">
-                  ⌘K
-                </kbd>
+              <SidebarMenuButton render={<a href="#" />}>
+                <CircleHelpIcon className="size-4" />
+                <span>Get Help</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
         </SidebarGroup>
       </SidebarContent>
-
-      <SidebarFooter>
-        <NavUser user={data.user} />
-      </SidebarFooter>
     </Sidebar>
   )
 }

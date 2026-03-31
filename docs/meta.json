@@ -2,6 +2,7 @@
   "title": "XO Org",
   "pages": [
     "index",
+    "routing",
     "design-principles",
     "phase-1",
     "phase-2",

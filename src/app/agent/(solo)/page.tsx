@@ -1,18 +1,13 @@
 import { ChartAreaInteractive } from "@/components/chart-area-interactive"
 import { SectionCards } from "@/components/section-cards"
-import { AgentStorage } from "@/components/agent-storage"
-import { AgentConnections } from "@/components/agent-connections"
+import { AgentChannels } from "@/components/agent-channels"
 import { SiteHeader } from "@/components/site-header"
+import { getAgentId } from "@/lib/mode"
 import { AGENTS } from "@/lib/mock-data"
 import { notFound } from "next/navigation"
 
-export default async function AgentDashboardPage({
-  params,
-}: {
-  params: Promise<{ id: string }>
-}) {
-  const { id } = await params
-  const agent = AGENTS.find((a) => a.id === id)
+export default function AgentSoloDashboard() {
+  const agent = AGENTS.find((a) => a.id === getAgentId())
   if (!agent) notFound()
 
   return (
@@ -25,9 +20,8 @@ export default async function AgentDashboardPage({
             <div className="px-4 lg:px-6">
               <ChartAreaInteractive />
             </div>
-            <div className="grid grid-cols-1 gap-4 px-4 lg:px-6 @xl/main:grid-cols-2">
-              <AgentStorage />
-              <AgentConnections />
+            <div className="px-4 lg:px-6">
+              <AgentChannels />
             </div>
           </div>
         </div>

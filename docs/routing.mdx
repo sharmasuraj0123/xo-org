@@ -1,0 +1,162 @@
+---
+title: Routing Architecture
+description: "Dual-mode routing system — how XO Org routes between /org/ and /agent/ based on deployment mode"
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+## Overview
+
+XO Org uses a **dual-mode routing architecture** controlled by a single environment variable. Every page in the application lives under either `/org/` or `/agent/`. The mode determines which routes are accessible, what the sidebar shows, and how client-side storage is namespaced.
+
+```
+NEXT_PUBLIC_XO_MODE=org     →  /org/*  (full workspace)
+NEXT_PUBLIC_XO_MODE=agent   →  /agent/* (standalone agent)
+```
+
+## Mode Detection
+
+The mode system lives in `src/lib/mode.ts` and exposes helpers used across server components, client components, and the proxy middleware:
+
+```ts
+type XOMode = "org" | "agent"
+
+getMode()          // → "org" | "agent"
+isOrgMode()        // → boolean
+isAgentMode()      // → boolean
+getAgentId()       // → string (default: "aria")
+getStoragePrefix() // → "org" | "agent"
+orgPath(path)      // → "/org" + path
+agentPath(path)    // → "/agent" + path
+```
+
+The mode is read from `process.env.NEXT_PUBLIC_XO_MODE` and defaults to `"org"` when unset.
+
+## Proxy Middleware
+
+`src/proxy.ts` handles route-level redirects before any page renders:
+
+| Request | Org Mode | Agent Mode |
+|---------|----------|------------|
+| `GET /` | Redirect → `/org` | Redirect → `/agent` |
+| `GET /org/*` | Pass through | Redirect → `/agent` |
+| `GET /agents/*` | Pass through | Redirect → `/agent` |
+| Everything else | Pass through | Pass through |
+
+The proxy only matches three patterns (`/`, `/org/:path*`, `/agents/:path*`) so API routes and static assets are never intercepted.
+
+## Route Map
+
+### Org Mode (`/org/*`)
+
+Org mode provides the full multi-agent workspace. All routes share a common layout with sidebar.
+
+| Route | Page | Description |
+|-------|------|-------------|
+| `/org` | Dashboard | Org-level overview |
+| `/org/agents` | Agent list | Browse and manage agents |
+| `/org/agents/connect` | Connect agent | Register a new agent |
+| `/org/objectives` | Objectives | OKR tracking table |
+| `/org/storage` | Storage | Workspace file browser |
+| `/org/reports` | Reports | Analytics and charts |
+| `/org/docs` | Docs | Documentation viewer |
+| `/org/channel/[id]` | Channel | Channel chat view |
+
+From the org dashboard, clicking into a specific agent navigates to the **agent detail** routes:
+
+| Route | Page | Description |
+|-------|------|-------------|
+| `/agent/[id]` | Agent dashboard | Individual agent overview |
+| `/agent/[id]/chat` | Agent chat | Chat with specific agent |
+| `/agent/[id]/objectives` | Agent objectives | Agent-scoped OKRs |
+
+<Callout title="Shared agent routes" type="info">
+The `/agent/[id]/*` routes are used by both modes. In org mode, the sidebar shows a "back to org" context switcher. In agent mode, these routes are not directly navigated to — the solo layout handles it.
+</Callout>
+
+### Agent Mode (`/agent/*`)
+
+Agent mode is a streamlined single-agent deployment. The sidebar shows only Chat and Dashboard. Routes like `/org/*` are blocked by the proxy.
+
+| Route | Page | Description |
+|-------|------|-------------|
+| `/agent` | Dashboard | Agent dashboard |
+| `/agent/chat` | Chat | Chat with the fixed agent |
+
+These use the `(solo)` route group (`src/app/agent/(solo)/`) which applies its own layout without exposing the `[id]` segment.
+
+## Route Groups
+
+Next.js App Router route groups organize layouts without affecting URLs:
+
+```
+src/app/agent/
+├── (solo)/           # Agent-only mode — no [id] in URL
+│   ├── layout.tsx    # Sidebar + SidebarInset
+│   ├── page.tsx      # /agent
+│   └── chat/
+│       └── page.tsx  # /agent/chat
+└── [id]/             # Org drill-in — [id] in URL
+    ├── layout.tsx    # Agent-detail sidebar
+    ├── page.tsx      # /agent/:id
+    ├── chat/
+    │   └── page.tsx  # /agent/:id/chat
+    └── objectives/
+        └── page.tsx  # /agent/:id/objectives
+```
+
+## Sidebar Modes
+
+The `AppSidebar` component determines its behavior from the current route and deployment mode using `useSidebarMode()`:
+
+| Sidebar Mode | When | Navigation Items |
+|-------------|------|-----------------|
+| `org` | On `/org/*` routes | Dashboard, Agents, Objectives |
+| `agent-solo` | Agent mode, on `/agent/*` | Chat, Dashboard |
+| `agent-detail` | Org mode, on `/agent/[id]/*` | Chat, Dashboard, Objectives |
+
+All three sidebar modes share the same bottom sections: Folders, Sessions, Tasks, Settings, and the command palette trigger.
+
+## Context Switcher
+
+The `ContextSwitcher` component in the sidebar header adapts to mode:
+
+**Org mode**: Shows a dropdown with the org identity plus all connected agents. Selecting an agent navigates to `/agent/[id]`. Selecting "XO Org" navigates back to `/org`.
+
+**Agent mode**: Shows a fixed agent identity (name + avatar) with no dropdown. The agent ID comes from `NEXT_PUBLIC_XO_AGENT_ID`.
+
+## Storage Isolation
+
+Client-side data is namespaced by mode to prevent cross-contamination:
+
+| Data | Org Mode Key | Agent Mode Key |
+|------|-------------|---------------|
+| Chat messages | `xo-org-session-{id}` | `xo-agent-session-{id}` |
+| Session metadata | `xo-org-sessions-meta` | `xo-agent-sessions-meta` |
+
+The prefix comes from `getStoragePrefix()` in `src/lib/mode.ts`, used by `src/lib/session-store.ts`.
+
+## API Routes
+
+API routes (`/api/*`) are not affected by mode — they serve both deployments identically. The `/api/storage` route reads `XO_STORAGE_ROOT` or `XO_AGENT_STORAGE_ROOT` depending on mode for file browsing. The `/api/proxy` route forwards to `XO_BACKEND_URL` or `XO_AGENT_BACKEND_URL`.
+
+| Endpoint | Mode Behavior |
+|----------|--------------|
+| `/api/storage` | Reads mode-specific storage root |
+| `/api/proxy` | Forwards to mode-specific backend URL |
+| All others | Mode-independent |
+
+## Adding a New Page
+
+To add a page that appears in both modes:
+
+1. Create the page under `src/app/org/{page}/page.tsx`
+2. Create the agent-solo variant under `src/app/agent/(solo)/{page}/page.tsx`
+3. Add navigation entry to `orgNav` and/or `agentSoloNav` in `app-sidebar.tsx`
+4. If the page should also appear when drilling into a specific agent, add it to `getAgentDetailNav()` and create `src/app/agent/[id]/{page}/page.tsx`
+
+To add an org-only page (not visible in agent mode):
+
+1. Create the page under `src/app/org/{page}/page.tsx`
+2. Add to `orgNav` in `app-sidebar.tsx`
+3. No agent variant needed — the proxy blocks `/org/*` in agent mode

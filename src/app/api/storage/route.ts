@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from "next/server"
 import fs from "node:fs"
 import path from "node:path"
 
-// Root directory for the file browser — defaults to workspace/ local folder
-const STORAGE_ROOT = process.env.XO_STORAGE_ROOT || path.join(process.cwd(), "workspace")
+// Root directory for the file browser — mode-aware
+const mode = process.env.NEXT_PUBLIC_XO_MODE || "org"
+const STORAGE_ROOT = mode === "agent"
+  ? (process.env.XO_AGENT_STORAGE_ROOT || path.join(process.cwd(), "workspace", "agent"))
+  : (process.env.XO_STORAGE_ROOT || path.join(process.cwd(), "workspace"))
 
 type FSEntry = {
   name: string

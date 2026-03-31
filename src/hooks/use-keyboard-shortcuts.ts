@@ -3,6 +3,7 @@
 
 import { useEffect } from "react";
 import { tinykeys } from "tinykeys";
+import { getMode } from "@/lib/mode";
 
 type ShortcutHandlers = {
   onCommandPalette?: () => void;
@@ -10,12 +11,27 @@ type ShortcutHandlers = {
   onNavigate?: (path: string) => void;
 };
 
+function orgPrefix(path: string): string {
+  const mode = getMode();
+  if (mode === "agent") return `/agent${path}`;
+  return `/org${path}`;
+}
+
 export function useKeyboardShortcuts({
   onCommandPalette,
   onShortcutsHelp,
   onNavigate,
 }: ShortcutHandlers) {
   useEffect(() => {
+    const isInput = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      return (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable
+      );
+    };
+
     const unsubscribe = tinykeys(window, {
       // Command palette
       "$mod+KeyK": (e) => {
@@ -24,89 +40,39 @@ export function useKeyboardShortcuts({
       },
       // Shortcuts help
       "Shift+?": (e) => {
-        // Don't trigger in inputs
-        const target = e.target as HTMLElement;
-        if (
-          target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable
-        ) {
-          return;
-        }
+        if (isInput(e)) return;
         e.preventDefault();
         onShortcutsHelp?.();
       },
       // Go-to sequences (Linear style: g then letter)
       "g d": (e) => {
-        const target = e.target as HTMLElement;
-        if (
-          target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable
-        )
-          return;
-        onNavigate?.("/");
+        if (isInput(e)) return;
+        onNavigate?.(getMode() === "agent" ? "/agent" : "/org");
       },
       "g a": (e) => {
-        const target = e.target as HTMLElement;
-        if (
-          target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable
-        )
-          return;
-        onNavigate?.("#agents");
+        if (isInput(e)) return;
+        onNavigate?.(getMode() === "agent" ? "/agent" : "/org/agents");
       },
       "g o": (e) => {
-        const target = e.target as HTMLElement;
-        if (
-          target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable
-        )
-          return;
-        onNavigate?.("/objectives");
+        if (isInput(e)) return;
+        onNavigate?.(orgPrefix("/objectives"));
       },
       "g s": (e) => {
-        const target = e.target as HTMLElement;
-        if (
-          target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable
-        )
-          return;
+        if (isInput(e)) return;
         onNavigate?.("#settings");
       },
-      // Channel shortcuts
+      // Channel shortcuts (org mode only)
       "g 1": (e) => {
-        const target = e.target as HTMLElement;
-        if (
-          target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable
-        )
-          return;
-        onNavigate?.("/channel/general");
+        if (isInput(e)) return;
+        if (getMode() === "org") onNavigate?.("/org/channel/general");
       },
       "g 2": (e) => {
-        const target = e.target as HTMLElement;
-        if (
-          target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable
-        )
-          return;
-        onNavigate?.("/channel/code-review");
+        if (isInput(e)) return;
+        if (getMode() === "org") onNavigate?.("/org/channel/code-review");
       },
       "g 3": (e) => {
-        const target = e.target as HTMLElement;
-        if (
-          target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable
-        )
-          return;
-        onNavigate?.("/channel/design");
+        if (isInput(e)) return;
+        if (getMode() === "org") onNavigate?.("/org/channel/design");
       },
     });
 

@@ -1,7 +1,10 @@
 /**
  * Local storage-backed session message store.
  * Persists chat history per session ID so conversations survive page reloads.
+ * Keys are namespaced by XO_MODE (org/agent) to isolate data between modes.
  */
+
+import { getStoragePrefix } from "./mode"
 
 export type StoredMessage = {
   id: string
@@ -18,15 +21,20 @@ export type SessionMeta = {
   messageCount: number
 }
 
-const STORAGE_PREFIX = "xo-session-"
-const META_KEY = "xo-sessions-meta"
+function storagePrefix() {
+  return `xo-${getStoragePrefix()}-session-`
+}
+
+function metaKey() {
+  return `xo-${getStoragePrefix()}-sessions-meta`
+}
 
 // ─── Message Operations ─────────────────────────────────────
 
 export function getSessionMessages(sessionId: string): StoredMessage[] {
   if (typeof window === "undefined") return []
   try {
-    const raw = localStorage.getItem(`${STORAGE_PREFIX}${sessionId}`)
+    const raw = localStorage.getItem(`${storagePrefix()}${sessionId}`)
     return raw ? JSON.parse(raw) : []
   } catch {
     return []
@@ -36,7 +44,7 @@ export function getSessionMessages(sessionId: string): StoredMessage[] {
 export function saveSessionMessages(sessionId: string, messages: StoredMessage[]): void {
   if (typeof window === "undefined") return
   try {
-    localStorage.setItem(`${STORAGE_PREFIX}${sessionId}`, JSON.stringify(messages))
+    localStorage.setItem(`${storagePrefix()}${sessionId}`, JSON.stringify(messages))
     // Update meta
     updateSessionMeta(sessionId, messages)
   } catch {
@@ -53,7 +61,7 @@ export function appendSessionMessage(sessionId: string, message: StoredMessage):
 export function clearSessionMessages(sessionId: string): void {
   if (typeof window === "undefined") return
   try {
-    localStorage.removeItem(`${STORAGE_PREFIX}${sessionId}`)
+    localStorage.removeItem(`${storagePrefix()}${sessionId}`)
     removeSessionMeta(sessionId)
   } catch {}
 }
@@ -63,7 +71,7 @@ export function clearSessionMessages(sessionId: string): void {
 function getAllMeta(): SessionMeta[] {
   if (typeof window === "undefined") return []
   try {
-    const raw = localStorage.getItem(META_KEY)
+    const raw = localStorage.getItem(metaKey())
     return raw ? JSON.parse(raw) : []
   } catch {
     return []
@@ -73,7 +81,7 @@ function getAllMeta(): SessionMeta[] {
 function saveMeta(metas: SessionMeta[]): void {
   if (typeof window === "undefined") return
   try {
-    localStorage.setItem(META_KEY, JSON.stringify(metas))
+    localStorage.setItem(metaKey(), JSON.stringify(metas))
   } catch {}
 }
 
