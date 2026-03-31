@@ -61,15 +61,36 @@ export function useAgentChat(sessionKey: string | null) {
     try {
       const id = `hist-${Date.now()}`
       const result = await rpc(id, "chat.history", { sessionKey: key, limit: 100 }) as {
-        messages?: Array<{ role: string; text: string; ts?: string }>
+        messages?: Array<{
+          role: string
+          // Flat text (some versions) or content array (standard GatewayMessage)
+          text?: string
+          content?: Array<{ type: string; text?: string; name?: string; arguments?: unknown }>
+          timestamp?: number
+          ts?: string
+          toolCalls?: Array<{ tool: string; input?: unknown; result?: unknown; status: string }>
+        }>
         hasMore?: boolean
       }
-      const msgs: ChatMessage[] = (result?.messages ?? []).map((m) => ({
-        id: nextId(),
-        role: m.role === "user" ? "user" : "assistant",
-        text: m.text ?? "",
-        ts: m.ts,
-      }))
+      const msgs: ChatMessage[] = (result?.messages ?? [])
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => {
+          // Extract text: prefer flat .text, else extract from content array
+          const text = m.text ??
+            (m.content ?? [])
+              .filter((c) => c.type === "text" && c.text?.trim())
+              .map((c) => c.text!)
+              .join("\n")
+              .trim()
+          if (!text) return null
+          return {
+            id: nextId(),
+            role: m.role === "user" ? "user" as const : "assistant" as const,
+            text,
+            ts: m.ts ?? (m.timestamp ? new Date(m.timestamp).toISOString() : undefined),
+          }
+        })
+        .filter(Boolean) as ChatMessage[]
       setMessages(msgs)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))

@@ -61,11 +61,15 @@ function connect() {
           role: "operator",
           scopes: ["operator.read", "operator.write"],
           auth: { token: _token },
-          client: { id: "xo-org-chat", version: "1.0.0", platform: "browser", mode: "operator" },
+          // client.id must be a known Gateway client ID; "openclaw-control-ui" with mode "ui"
+          // is the standard operator dashboard identity
+          client: { id: "openclaw-control-ui", version: "1.0.0", platform: "browser", mode: "ui" },
           device: {
             id: "xo-org-dashboard",
-            publicKey: "",
-            signature: "",
+            // publicKey and signature must be non-empty; pass a single-byte placeholder
+            // since token auth is the primary auth method here
+            publicKey: "A",
+            signature: "A",
             nonce: payload.nonce,
             signedAt: payload.ts ?? Date.now(),
           },
