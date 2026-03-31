@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server"
 
 /**
  * GET /api/openclaw/ws-token
@@ -11,15 +11,21 @@ import { NextResponse } from "next/server"
  * This avoids the browser trying to reach ws://127.0.0.1:18789 directly,
  * which fails in cloud/remote environments.
  */
-export async function GET() {
-  // In production or when NEXT_PUBLIC_GATEWAY_WS_URL is set explicitly, use that.
-  // Otherwise default to the same-origin proxy path.
+export async function GET(request: NextRequest) {
   const explicitUrl = process.env.NEXT_PUBLIC_GATEWAY_WS_URL
   const token = process.env.OPENCLAW_GATEWAY_TOKEN || "xo"
 
-  // Use relative WS path — browser will resolve to same host:port
-  // e.g. ws://localhost:3006/api/gateway/ws
-  const url = explicitUrl || "__RELATIVE__"
+  // Build the WS URL from the incoming request's host so it works
+  // behind any proxy (Coder, Gitpod, Codespaces, localhost, etc.)
+  let url: string
+  if (explicitUrl) {
+    url = explicitUrl
+  } else {
+    const host = request.headers.get("host") || "localhost:3006"
+    const proto = request.headers.get("x-forwarded-proto") || "http"
+    const wsProto = proto === "https" ? "wss" : "ws"
+    url = `${wsProto}://${host}/api/gateway/ws`
+  }
 
   return NextResponse.json({ url, token })
 }

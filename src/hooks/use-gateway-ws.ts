@@ -41,7 +41,7 @@ function connect() {
   _ws = ws
 
   ws.onopen = () => {
-    // Wait for challenge — don't do anything yet
+    console.log("[gateway-ws] socket open, waiting for challenge...")
   }
 
   ws.onmessage = (ev) => {
@@ -90,7 +90,8 @@ function connect() {
     _handlers.forEach((fn) => fn(frame))
   }
 
-  ws.onclose = () => {
+  ws.onclose = (ev) => {
+    console.log("[gateway-ws] closed — code:", ev.code, "reason:", ev.reason || "(none)")
     notifyState(false)
     _ws = null
     // Exponential backoff reconnect
@@ -100,7 +101,8 @@ function connect() {
     }, _reconnectDelay)
   }
 
-  ws.onerror = () => {
+  ws.onerror = (e) => {
+    console.error("[gateway-ws] WebSocket error — check browser console for details", e)
     ws.close()
   }
 }
@@ -112,16 +114,9 @@ async function bootstrap() {
     if (!res.ok) throw new Error("Failed to fetch WS token")
     const data = await res.json() as { url: string; token: string }
 
-    // "__RELATIVE__" means use the same-origin WS proxy path
-    if (data.url === "__RELATIVE__") {
-      const loc = window.location
-      const wsScheme = loc.protocol === "https:" ? "wss:" : "ws:"
-      _wsUrl = `${wsScheme}//${loc.host}/api/gateway/ws`
-    } else {
-      _wsUrl = data.url
-    }
-
+    _wsUrl = data.url
     _token = data.token
+    console.log("[gateway-ws] bootstrapped, connecting to:", _wsUrl)
     connect()
   } catch (e) {
     // Retry after delay
