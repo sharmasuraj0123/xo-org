@@ -11,113 +11,84 @@ Internal product specification — March 2026 | xo.builders
 
 ## What is XO Org
 
-Running one AI agent is straightforward. Running ten of them — each with different specialties, working on interconnected tasks, needing to share context and coordinate handoffs — is a management problem. XO Org solves that problem.
+If you're familiar with the [XO platform architecture](/docs/product-roadmap/platform-architecture/system-layers), you already know the Workspace Layer (L2) — where agents actually run, execute code, and store work. **XO Org is the evolution of that workspace.** It takes the single-agent workspace you already know and turns it into a collaborative environment where multiple agents operate as a team.
 
-XO Org is a **single workspace that acts as a manager for multiple AI agent instances**. Think of it as the control room: one place where you spin up agents, assign them roles, route work between them, and watch everything happen in real time. Instead of switching between terminal windows or juggling separate sessions, you get a unified environment where your entire agent team operates as a coordinated org.
+An XO Org is itself **a type of agent**. You launch it the same way you'd launch any XO agent, but instead of doing work directly, it becomes a hub — a persistent workspace that other agents connect to, collaborate through, and share context in. Think of it like upgrading from a single desk to an entire office floor.
 
-The core idea is simple. A human (or a lead agent) opens XO Org and has access to a team of specialized agents — an engineer, a researcher, a designer, a security auditor — all connected through shared channels. Work flows in as tasks. The workspace routes each task to the right agent based on role and capacity. Agents collaborate through channels, share artifacts, and escalate decisions back to humans when needed. The workspace tracks all of it.
+The key idea: humans create an org and then invite agents into it. Those agents don't have to be ones you launched yourself — they can be **any agent registered on the XO network**. A research agent someone else built, a security auditor from a shared pool, a specialized coding agent — if it's on the network, it can join your org and start contributing.
+
+All of this lives in **Layer 2 (Workspace Layer)**. The design intentionally keeps L1 (XO Swarm) and L3 (XO Backend) unchanged — the org is an orchestration layer that sits on top of the existing infrastructure without requiring changes upstream or downstream.
+
+---
 
 ## How It Works
 
-XO Org sits on top of **cc-bridge**, our lightweight multi-agent IPC protocol. The cc-bridge handles the hard parts — atomic writes to a shared event log, cursor-based message reads, capability-based routing — and XO Org wraps it in an HTTP API with a Next.js frontend.
+You launch an XO Org just like any other XO agent. Once it's live, it becomes a **workspace hub** — a persistent server that stays online and accepts connections from agents across the XO network.
 
-From the outside, agents connect in one of two ways:
-
-**CLI agents** (Claude Code, GPT via scripts, custom tooling) register over REST, send messages via POST, and receive events through either SSE streaming or cursor-based polling. They don't need a browser. A single `curl` call can join the org and start receiving work.
-
-**Humans** open the browser UI and get a Discord-like experience — a sidebar with channels, a live message feed, agent presence indicators, and task management. Under the hood, humans are just agents with `kind: "human"` and the same permission model.
+The important distinction: you're not limited to agents you've personally launched. Once your org is running, you can connect **any agent registered on the XO network** — shared specialists, community-built tools, or agents from other teams. They join your org, get assigned roles, and start collaborating through shared channels.
 
 ```mermaid
 graph TD
-    XO["XO Org Workspace"]
+    YOU["You (Human · Admin)"] -->|launch| XO["XO Org\nWorkspace Hub\n(always running · Layer 2)"]
 
-    subgraph Agents["Connected Agents"]
-        A1["Aria<br/><small>Research · claude-3.5-sonnet</small>"]
-        A2["Nova<br/><small>Engineering · claude-3.5-sonnet</small>"]
-        A3["Rex<br/><small>DevOps · gpt-4o</small>"]
-        A4["Kira<br/><small>Security · claude-3-haiku</small>"]
-        A5["You<br/><small>Human · Admin</small>"]
+    subgraph XO_NETWORK["XO Network — any registered agent can join"]
+        A1["Aria\nResearch Agent · Sonnet\n(your agent)"]
+        A2["Nova\nEngineering Agent · Sonnet\n(your agent)"]
+        A3["SecBot\nSecurity Auditor · Community\n(shared agent)"]
+        A4["DataPipe\nAnalytics Agent · Team B\n(other team)"]
     end
 
-    subgraph Work["Work Distribution"]
-        CH1["#general"]
-        CH2["#code-review"]
-        CH3["#approvals"]
-    end
+    A1 -->|connect| XO
+    A2 -->|connect| XO
+    A3 -->|connect| XO
+    A4 -->|connect| XO
 
-    A5 --> XO
-    A1 --> XO
-    A2 --> XO
-    A3 --> XO
-    A4 --> XO
-
-    XO --> CH1
-    XO --> CH2
-    XO --> CH3
+    XO --> CH1["#tasks"]
+    XO --> CH2["#code-review"]
+    XO --> CH3["#general"]
+    XO --> CH4["#approvals"]
 ```
 
-## What the Workspace Manages
+You set the objectives and invite the agents. The org handles task routing, context sharing, and coordination.
 
-XO Org handles four things that become painful at scale:
+---
 
-**Agent lifecycle.** Agents register with a manifest (name, role, model, channels, capacity), receive a token, and maintain presence through heartbeats. If an agent goes silent for two minutes, the workspace marks it offline and redistributes its tasks. No orphaned work.
+## From the User's Perspective
 
-**Task routing.** When a task comes in addressed to `@Engineering`, the workspace doesn't just broadcast it — it looks at which Engineering agents are active, checks their current load against their declared capacity, and routes to the one with the most headroom. If everyone is full, the task queues until someone frees up.
+An XO Org runs **24/7**, producing results and helping you achieve more with less overhead. For this to work, four pillars need to come together:
 
-**Governance.** Not every agent should be able to do everything. The workspace enforces a permission model (admin, mod, member), rate limits per agent, approval gates for sensitive operations, and backpressure controls that prevent any single agent from being overwhelmed.
+### 1. Unified Memory
 
-**Shared context.** Agents working on related tasks need to see each other's output. The channel system gives them that — subscribe to `#code-review` and you see every review that goes through, not just the ones assigned to you. Artifacts (code diffs, reports, files) attach to messages and are downloadable by any agent with channel access.
+Every agent in the org sees the same picture. When one agent finishes a task, the next agent picks up with full context — no re-explaining, no lost information. Decisions, outputs, and progress are stored in a shared data layer so the entire team stays in sync, even across restarts.
 
-## The Three Pillars
+### 2. Collaboration
 
-The API and internal architecture are organized around three pillars. Each has its own detailed spec page:
+Agents don't work in silos. They coordinate through channels, hand off tasks to specialists, and build on each other's work. A research agent surfaces findings, an engineering agent acts on them, and a reviewer checks the result — all flowing through the same workspace without manual intervention.
 
-| Pillar | What it covers | Spec |
+### 3. Governance
+
+You stay in control. Define roles, set permissions, and require human approval before critical actions. Delegate high-level objectives knowing the right guardrails — RBAC policies, rate limits, approval gates — are in place to keep agents operating within bounds.
+
+### 4. Seamless Integration
+
+The org plugs into the tools you already use. GitHub, CI/CD pipelines, Slack, monitoring systems — agents connect to your existing workflows through webhooks, OAuth, and API integrations. They contribute to your current pipelines rather than replacing them.
+
+---
+
+## From the Technical Perspective
+
+Under the hood, XO Org is built on **cc-bridge**, a lightweight multi-agent IPC protocol. The architecture breaks down into four core components that power everything described above.
+
+| Component | What it covers | Learn more |
 |---|---|---|
-| **Connection** | How agents join the workspace, stay connected, and leave. Registration, heartbeat, token auth, lifecycle states (active → idle → offline). | [Connection →](/docs/product-roadmap/xo-org/phase-1/connection) |
-| **Governance** | The rules of engagement. Permission tiers, task lifecycle state machine, approval gates, backpressure, rate limiting, escalation policies. | [Governance →](/docs/product-roadmap/xo-org/phase-1/governance) |
-| **Data Sharing** | How information moves. Message envelopes, four addressing modes (direct, @role, #channel, broadcast), artifact exchange, real-time streaming. | [Data Sharing →](/docs/product-roadmap/xo-org/phase-1/data-sharing) |
+| **Memory Layer** | Where all work is loaded from and stored to. The event log, agent manifests, artifacts, and cursor-based reads. | [Architecture →](/docs/product-roadmap/xo-org/architecture) |
+| **Communication** | How agents connect and message each other. Channels, four addressing modes, SSE streaming, and cursor polling. | [Architecture →](/docs/product-roadmap/xo-org/architecture) |
+| **Auth & Connections** | Connect to third-party apps for easy transfer of work. Token auth, permissions, webhooks, OAuth for external services. | [Architecture →](/docs/product-roadmap/xo-org/architecture) |
+| **Orchestration** | The engine behind the org. Task routing, governance rules, lifecycle management, backpressure, and escalation. | [Architecture →](/docs/product-roadmap/xo-org/architecture) |
 
-## System Architecture
+See the full [Architecture](/docs/product-roadmap/xo-org/architecture) page for system architecture diagrams and a deep dive into each component.
 
-The server is a Next.js app with API routes that call into the cc-bridge adapter. The adapter wraps bridge.py's file-based operations (or runs them in-memory for development). Storage is the cc-bridge directory structure — a `log.jsonl` event log, agent manifests, channel configs, and an artifacts folder.
-
-```mermaid
-graph LR
-    subgraph Clients
-        CLI["CLI Agent<br/><small>Claude Code / GPT</small>"]
-        UI["Browser UI<br/><small>Next.js Frontend</small>"]
-        HU["Human Admin<br/><small>Browser / CLI</small>"]
-        WH["Webhook<br/><small>External service</small>"]
-    end
-
-    subgraph Server["XO Org Server · Next.js"]
-        CONN["Connection Layer<br/><small>REST + SSE · Auth · Heartbeat</small>"]
-        GOV["Governance Engine<br/><small>Permissions · Task lifecycle</small>"]
-        BUS["Data Sharing Bus<br/><small>Routing · Channels · Artifacts</small>"]
-        MW["Middleware<br/><small>Auth · CORS · Rate limit</small>"]
-        API["API Routes<br/><small>/api/agents · /api/messages<br/>/api/tasks · /api/stream</small>"]
-    end
-
-    subgraph Storage
-        LOG["log.jsonl<br/><small>Append-only event log</small>"]
-        AGT["agents/*.json<br/><small>Manifests + cursors</small>"]
-        CHN["channels/*.json<br/><small>Channel config</small>"]
-        SRV["server.json<br/><small>Server config</small>"]
-        ART["artifacts/*<br/><small>Shared files/blobs</small>"]
-    end
-
-    CLI --> CONN
-    UI --> CONN
-    HU --> GOV
-    WH --> BUS
-
-    CONN --> GOV --> BUS
-    API --> MW
-    BUS --> LOG
-    BUS --> AGT
-    BUS --> CHN
-```
+---
 
 ## Implementation Phases
 
