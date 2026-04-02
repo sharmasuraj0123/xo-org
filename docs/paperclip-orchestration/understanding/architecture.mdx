@@ -1,0 +1,303 @@
+---
+title: "Architecture"
+description: "How Paperclip's multi-agent orchestration system is architected — components, data flow, and how everything connects"
+---
+
+## What is Paperclip?
+
+Paperclip is an open-source control plane for AI-agent companies. It doesn't run agents — it **orchestrates** them. Think of it as the corporate operating system for a company where every employee is an AI agent.
+
+A human operator (the "board") defines a company, hires agents, sets budgets, approves strategies, and monitors work from a dashboard. The agents — running externally as Claude Code, Codex, Cursor, Gemini, or any process that can receive a heartbeat — phone home to Paperclip to get work, report progress, and log costs.
+
+---
+
+## System Architecture
+
+```mermaid
+graph TB
+    subgraph "Board (Human Operator)"
+        UI["React Dashboard<br/><small>Company management, approvals, costs</small>"]
+    end
+
+    subgraph "Control Plane (Paperclip Server)"
+        API["Express REST API<br/><small>/api/* endpoints</small>"]
+
+        subgraph "Orchestration Services"
+            HB["Heartbeat Service<br/><small>Wake, invoke, track runs</small>"]
+            BUD["Budget Service<br/><small>Cost limits, auto-pause</small>"]
+            APP["Approval Service<br/><small>Hire gates, strategy gates</small>"]
+            ISS["Issue Service<br/><small>Task lifecycle, checkout</small>"]
+            RTN["Routine Service<br/><small>Cron-based recurring work</small>"]
+            AGT["Agent Service<br/><small>Org chart, permissions</small>"]
+        end
+
+        subgraph "Background Scheduler"
+            TICK["setInterval tick<br/><small>Every N ms</small>"]
+        end
+
+        subgraph "Adapter Registry"
+            CL["Claude"]
+            CDX["Codex"]
+            CUR["Cursor"]
+            GEM["Gemini"]
+            OC["OpenClaw"]
+            PROC["Process"]
+            HTTP["HTTP"]
+            MORE["+ Pi, OpenCode,<br/>Hermes"]
+        end
+
+        DB[("PostgreSQL<br/><small>Drizzle ORM</small>")]
+    end
+
+    subgraph "External Agent Runtimes"
+        A1["Claude Code CLI"]
+        A2["Codex CLI"]
+        A3["Cursor Agent"]
+        A4["Custom Process"]
+    end
+
+    UI --> API
+    API --> HB
+    API --> BUD
+    API --> APP
+    API --> ISS
+    API --> RTN
+    API --> AGT
+
+    TICK --> HB
+    TICK --> RTN
+
+    HB --> CL
+    HB --> CDX
+    HB --> CUR
+    HB --> GEM
+    HB --> OC
+    HB --> PROC
+    HB --> HTTP
+
+    CL --> A1
+    CDX --> A2
+    CUR --> A3
+    PROC --> A4
+
+    HB --> DB
+    BUD --> DB
+    APP --> DB
+    ISS --> DB
+    RTN --> DB
+    AGT --> DB
+
+    A1 -.->|"API calls<br/>(report cost, update task)"| API
+    A2 -.->|"API calls"| API
+    A3 -.->|"API calls"| API
+    A4 -.->|"API calls"| API
+```
+
+---
+
+## Core Principle
+
+**The control plane doesn't run agents. It orchestrates them.**
+
+Agents run wherever they run — as local CLI processes, remote HTTP services, or WebSocket gateway sessions. Paperclip's job is to:
+
+1. **Decide** who does what (task routing, org chart delegation)
+2. **Enforce** rules (budgets, approvals, state transitions)
+3. **Schedule** when agents wake up (heartbeat timers, cron routines)
+4. **Track** everything (costs, activity log, run history)
+
+---
+
+## Runtime Components
+
+| Component | Location | Responsibility |
+|---|---|---|
+| **REST API** | `server/src/routes/` | Express routes — thin handlers that call services |
+| **Services** | `server/src/services/` | Business logic — heartbeat, budgets, approvals, issues, agents, routines |
+| **Adapters** | `server/src/adapters/` + `packages/adapters/` | Bridge between control plane and external agent runtimes |
+| **Database** | `packages/db/` | Drizzle schema and PostgreSQL (or embedded PGlite for dev) |
+| **Shared Types** | `packages/shared/` | TypeScript types, validators, constants shared across packages |
+| **Board UI** | `ui/` | React + Vite dashboard for the human operator |
+
+---
+
+## Data Model Overview
+
+Everything is **company-scoped**. A company is the top-level tenant — every entity belongs to exactly one company.
+
+```mermaid
+erDiagram
+    COMPANIES ||--o{ AGENTS : "employs"
+    COMPANIES ||--o{ GOALS : "defines"
+    COMPANIES ||--o{ PROJECTS : "contains"
+    COMPANIES ||--o{ ISSUES : "tracks"
+    COMPANIES ||--o{ APPROVALS : "governs"
+    COMPANIES ||--o{ BUDGET_POLICIES : "budgets"
+    COMPANIES ||--o{ COST_EVENTS : "spends"
+
+    AGENTS ||--o{ AGENTS : "reports_to"
+    AGENTS ||--o{ ISSUES : "assigned_to"
+    AGENTS ||--o{ HEARTBEAT_RUNS : "invoked_via"
+    AGENTS ||--o{ COST_EVENTS : "incurs"
+    AGENTS ||--o{ AGENT_API_KEYS : "authenticates_with"
+
+    GOALS ||--o{ GOALS : "parent_child"
+    GOALS ||--o{ PROJECTS : "linked_to"
+
+    PROJECTS ||--o{ ISSUES : "contains"
+
+    ISSUES ||--o{ ISSUES : "parent_child"
+    ISSUES ||--o{ ISSUE_COMMENTS : "has"
+    ISSUES ||--o{ ISSUE_DOCUMENTS : "has"
+
+    HEARTBEAT_RUNS ||--o{ HEARTBEAT_RUN_EVENTS : "logs"
+
+    ROUTINES ||--o{ ROUTINE_TRIGGERS : "scheduled_by"
+    ROUTINES ||--o{ ROUTINE_RUNS : "executes_as"
+```
+
+### Key Entities
+
+| Entity | What it represents |
+|---|---|
+| **Company** | The AI company being orchestrated. Has a name, mission, budget, and issue prefix (e.g., "PAP-42") |
+| **Agent** | An AI employee. Has a role, title, org position (`reports_to`), adapter type, budget, and heartbeat config |
+| **Issue** | A unit of work (task/ticket). Has status, assignee, priority, parent/child hierarchy, and goal linkage |
+| **Goal** | Hierarchical objectives: company > team > agent > task level |
+| **Project** | Groups of issues with a lead agent, linked to goals |
+| **Heartbeat Run** | A record of one agent invocation — status, duration, logs, cost, session state |
+| **Cost Event** | A single LLM API charge — provider, model, tokens, cost in cents |
+| **Approval** | A governance gate — hire request, strategy proposal, or budget override |
+| **Routine** | A recurring task template with cron triggers |
+
+---
+
+## How a Task Flows Through the System
+
+This is the complete lifecycle — from a human creating a task to an agent completing it.
+
+```mermaid
+sequenceDiagram
+    participant Board as Board (Human)
+    participant API as REST API
+    participant ISS as Issue Service
+    participant HB as Heartbeat Service
+    participant BUD as Budget Service
+    participant REG as Adapter Registry
+    participant Agent as External Agent
+
+    Board->>API: POST /companies/:id/issues<br/>{title, assigneeAgentId}
+    API->>ISS: createIssue(...)
+    ISS->>ISS: Generate identifier (PAP-42)
+    ISS->>ISS: Resolve goal (project → company fallback)
+    ISS-->>API: Issue created (status: backlog/todo)
+
+    Note over ISS,HB: Assignment triggers auto-wake
+
+    ISS->>HB: queueIssueAssignmentWakeup()<br/>source: "assignment"
+    HB->>BUD: getInvocationBlock(companyId, agentId)
+
+    alt Budget exceeded
+        BUD-->>HB: Block reason
+        HB->>HB: Write skipped wakeup request
+    else Budget OK
+        BUD-->>HB: null (no block)
+        HB->>HB: Create wakeup request + heartbeat run (queued)
+        HB->>HB: Check maxConcurrentRuns
+        HB->>REG: getServerAdapter(agent.adapterType)
+        REG-->>HB: Claude/Codex/Cursor adapter
+        HB->>Agent: adapter.execute(context)
+
+        Note over Agent: Agent works on the task
+
+        Agent->>API: POST /issues/:id/checkout<br/>{agentId, expectedStatuses}
+        API->>ISS: Atomic checkout (single SQL UPDATE)
+
+        alt Checkout succeeds
+            ISS-->>Agent: 200 OK (status: in_progress)
+        else Another agent owns it
+            ISS-->>Agent: 409 Conflict
+        end
+
+        Agent->>API: POST /cost-events<br/>{tokens, cost, model}
+        API->>BUD: evaluateCostEvent()
+        BUD->>BUD: Check soft/hard thresholds
+
+        Agent->>API: PATCH /issues/:id<br/>{status: "done", comment: "..."}
+        ISS->>ISS: Set completedAt, terminal state
+
+        Agent->>HB: Run completes (exit code 0)
+        HB->>HB: Record result, usage, session state
+    end
+```
+
+---
+
+## The Background Scheduler
+
+Paperclip uses a single-process, in-memory scheduler. No external queue infrastructure is needed.
+
+```mermaid
+graph TD
+    TICK["setInterval fires<br/>(every heartbeatSchedulerIntervalMs)"] --> T1["heartbeat.tickTimers()"]
+    TICK --> T2["routines.tickScheduledTriggers()"]
+    TICK --> T3["heartbeat.reapOrphanedRuns()"]
+    TICK --> T4["heartbeat.resumeQueuedRuns()"]
+
+    T1 --> |"For each agent:<br/>interval elapsed?"| W1["enqueueWakeup()<br/>source: timer"]
+    T2 --> |"For each trigger:<br/>cron expression due?"| W2["Create routine run<br/>+ spawn issue"]
+    T3 --> |"Find 'running' runs<br/>with no tracker"| W3["Mark failed or retry"]
+    T4 --> |"Find 'queued' runs<br/>per agent"| W4["Start execution<br/>(respect maxConcurrentRuns)"]
+```
+
+### What each tick does
+
+1. **`tickTimers()`** — Iterates all agents. Skips paused/terminated. If the agent's heartbeat interval has elapsed since `lastHeartbeatAt`, enqueues a wakeup with source `"timer"`.
+
+2. **`tickScheduledTriggers()`** — Queries routine triggers where `nextRunAt <= now`. For each due trigger, creates a routine run which spawns a new issue and optionally wakes the assigned agent.
+
+3. **`reapOrphanedRuns()`** — Finds heartbeat runs stuck in "running" status with no in-memory tracker. Checks if the child process PID is still alive. If dead, marks as failed and optionally retries once.
+
+4. **`resumeQueuedRuns()`** — Finds "queued" heartbeat runs and starts them, respecting each agent's `maxConcurrentRuns` limit.
+
+### Startup Recovery
+
+On server start, before the interval begins:
+```
+reapOrphanedRuns() → resumeQueuedRuns()
+```
+This handles runs that were in-flight when the server crashed — they get cleaned up and queued work resumes.
+
+---
+
+## Auth Model
+
+Two authentication paths:
+
+| Actor | Auth method | Scope |
+|---|---|---|
+| **Board (human)** | Session-based auth | Full read/write across all companies |
+| **Agent** | Bearer API key (`agent_api_keys`) | Scoped to one agent + one company |
+
+Agent API keys are hashed at rest (plaintext shown once at creation). Agents can read company context, read/write their own tasks, create subtasks for delegation, report heartbeat status, and report cost events. They **cannot** bypass approval gates, modify budgets, or mutate auth/keys.
+
+---
+
+## Real-Time Events
+
+An in-process `EventEmitter` publishes live events for every mutation. The board UI subscribes via SSE/WebSocket to get instant updates — agent status changes, run progress, approval notifications, cost alerts.
+
+```mermaid
+graph LR
+    MUT["Any mutation<br/>(service layer)"] --> PUB["publishLiveEvent()<br/>{companyId, type, payload}"]
+    PUB --> WS["WebSocket / SSE<br/>connections"]
+    WS --> UI["Board Dashboard<br/>(React)"]
+```
+
+---
+
+## Company Scoping
+
+Every database query enforces company boundaries. An agent authenticated for Company A cannot read or write Company B's data. This is enforced at the route level (middleware checks) and the service level (WHERE clauses include `company_id`).
+
+The system supports multiple companies in a single deployment, but V1 targets a single human operator managing one or more AI companies from one dashboard.

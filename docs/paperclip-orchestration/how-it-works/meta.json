@@ -1,0 +1,10 @@
+{
+  "title": "How It Works",
+  "pages": [
+    "task-flow",
+    "heartbeat-system",
+    "budget-enforcement",
+    "governance",
+    "agent-config"
+  ]
+}
