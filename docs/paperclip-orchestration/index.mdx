@@ -1,0 +1,44 @@
+---
+title: "Paperclip Orchestration"
+description: "How Paperclip orchestrates teams of AI agents — architecture, task flow, heartbeat scheduling, budget enforcement, and more"
+---
+
+## What is This?
+
+Paperclip is an open-source control plane for AI-agent companies. It coordinates teams of AI agents — Claude, Codex, Cursor, Gemini, and others — to run as an autonomous business under human oversight.
+
+This documentation analyzes Paperclip's **orchestrator layer**: how work gets created, routed, assigned, tracked, governed, and completed. It was written as research for building XO Org's own orchestrator.
+
+---
+
+## Reading Order
+
+### If you're new to Paperclip
+
+Start here and read in order:
+
+1. **[Architecture](/docs/product-roadmap/xo-org/paperclip-orchestration/understanding/architecture)** — the big picture: what components exist, how they connect, and the data model
+2. **[Task Flow](/docs/product-roadmap/xo-org/paperclip-orchestration/how-it-works/task-flow)** — the core loop: how a task goes from creation to completion, including delegation and all supporting features
+3. **[Heartbeat System](/docs/product-roadmap/xo-org/paperclip-orchestration/how-it-works/heartbeat-system)** — how agents wake up, execute, and report back
+4. **[Budget Enforcement](/docs/product-roadmap/xo-org/paperclip-orchestration/how-it-works/budget-enforcement)** — how spending is tracked and limits are enforced
+
+### If you want to understand the design
+
+- **[Design Decisions](/docs/product-roadmap/xo-org/paperclip-orchestration/understanding/design-decisions)** — why Paperclip made the architectural choices it did, and the tradeoffs
+- **[Comparison with XO Org](/docs/product-roadmap/xo-org/paperclip-orchestration/understanding/comparison)** — where the two systems converge, diverge, and what XO Org can learn
+
+### If you need to look something up
+
+- **[Feature Spec](/docs/product-roadmap/xo-org/paperclip-orchestration/reference/spec)** — every feature summarized with behavior and limitations
+- **[Agent Adapters](/docs/product-roadmap/xo-org/paperclip-orchestration/reference/agent-adapters)** — how different agent types are invoked (Connections layer, not Orchestrator)
+- **[Agent Config](/docs/product-roadmap/xo-org/paperclip-orchestration/how-it-works/agent-config)** — the runtimeConfig (orchestrator-owned) vs adapterConfig (connections layer) split
+
+---
+
+## Sections
+
+| Section | What it covers |
+|---|---|
+| **Understanding Paperclip** | Architecture, design decisions, comparison with XO Org |
+| **How It Works** | Task flow, heartbeat scheduling, budget enforcement, agent configuration |
+| **Reference** | Feature catalog, adapter details |

@@ -1,0 +1,302 @@
+---
+title: "Design Decisions"
+description: "Why Paperclip's orchestrator is built the way it is — architectural choices, tradeoffs, and the reasoning behind them"
+---
+
+## Overview
+
+Paperclip's orchestrator makes dozens of non-obvious design choices. Understanding *why* these decisions were made — not just what they are — is critical for anyone building a similar system. This document covers the key architectural decisions, what alternatives existed, and what tradeoffs each choice creates.
+
+---
+
+## Decision 1: Single-Process Scheduler (No External Queue)
+
+### What they chose
+A `setInterval` loop inside the Node.js server process. Every tick checks all agents for due heartbeats, evaluates cron triggers, reaps orphaned runs, and resumes queued work.
+
+### What they didn't choose
+- Redis/BullMQ job queue
+- Separate worker process
+- Event-driven scheduling (wake on demand only)
+
+### Why
+Paperclip V1 targets small-to-medium deployments — dozens of agents, not thousands. A single-process scheduler eliminates infrastructure dependencies (no Redis, no message broker), simplifies deployment (one process to run), and removes an entire class of distributed systems bugs (no queue consumer coordination, no at-least-once vs exactly-once semantics).
+
+### Tradeoff
+- **Pro:** Zero external dependencies for background processing. Dead simple to reason about.
+- **Pro:** All scheduling state is in-process — no serialization/deserialization overhead.
+- **Con:** Doesn't scale horizontally. One server = one scheduler. Can't distribute heartbeat ticks across multiple machines.
+- **Con:** If the server process crashes, all in-flight runs are orphaned. The startup recovery (`reapOrphanedRuns`) mitigates this but can't save partially-completed work.
+
+### Implication for XO Org
+XO Org's piggyback-on-API-calls approach is even simpler — no background timer at all. The tradeoff is that nothing happens when no API calls are being made. If XO Org ever needs proactive scheduling (like "wake agent every 5 minutes"), a `setInterval` approach like Paperclip's is the natural next step before reaching for external queue infrastructure.
+
+---
+
+## Decision 2: Push Model (Server Spawns Agents) vs Pull Model
+
+### What they chose
+The server **spawns agent processes** via adapters. The control plane decides when to invoke an agent and starts it directly (child process, HTTP call, or WebSocket message).
+
+### What they didn't choose
+- Pull model where agents poll for work (like XO Org)
+- Pub/sub model where agents subscribe to task topics
+
+### Why
+Paperclip's stated goal is a "control plane" — a system that *controls* agents, not one that agents *choose to interact with*. Push gives the server authority over:
+- **When** agents run (heartbeat timer controls this)
+- **How long** they run (timeout + graceful shutdown)
+- **What context** they receive (thin vs fat context delivery)
+- **Whether** they can run at all (budget blocking happens before spawn)
+
+In a pull model, a misbehaving agent could ignore rate limits and keep polling. In a push model, the agent literally doesn't exist until the server creates the process.
+
+### Tradeoff
+- **Pro:** Full control over agent lifecycle — the server can cancel, pause, timeout, and kill agents.
+- **Pro:** Budget enforcement is trivial — just don't spawn the agent.
+- **Pro:** Session management is centralized — the server owns the session state.
+- **Con:** Agents must run on the same machine as the server (for local adapters). No remote agent pools.
+- **Con:** Tighter coupling — agents are spawned processes, not independent services.
+- **Con:** Harder to integrate arbitrary agent types — you need an adapter for each one.
+
+### Implication for XO Org
+XO Org's pull model is better for agent integration (any HTTP client works) but weaker for control. A hybrid approach is possible: keep the pull model for agent communication, but add server-side scheduling that wakes agents via a push notification when they need to check for work.
+
+---
+
+## Decision 3: Atomic Checkout via SQL (Not Application-Level Locks)
+
+### What they chose
+A single `UPDATE ... WHERE status IN (?) AND assignee IS NULL` statement. The database itself is the lock — if the update affects 0 rows, another agent already claimed the task.
+
+### What they didn't choose
+- Application-level mutex/semaphore
+- Optimistic locking with version numbers
+- Redis distributed lock
+- "Claim then confirm" two-phase pattern
+
+### Why
+SQL `UPDATE ... WHERE` is atomic by definition in PostgreSQL — no extra infrastructure, no race window, no cleanup needed if the process crashes mid-lock. The WHERE clause acts as both a check and a lock in one operation.
+
+Version-number optimistic locking would require read-then-write with a retry loop. Application-level locks would need cleanup on crash. Redis locks would add infrastructure. The SQL approach is the simplest pattern that provides correctness.
+
+### Tradeoff
+- **Pro:** Zero race conditions by construction — the database enforces exclusivity.
+- **Pro:** No lock cleanup — if the server crashes, there's no orphaned lock to clear (the run can be reaped on restart).
+- **Pro:** Idempotent — same agent calling checkout twice gets a success, not a conflict.
+- **Con:** Requires a real database (not in-memory maps). XO Org's bridge.ts can't do this directly.
+- **Con:** Slightly less flexible — the checkout is a single operation, not a "hold and release" pattern.
+
+### Implication for XO Org
+If XO Org moves to persistent storage (database or even file-backed), this pattern becomes available. Even with in-memory state, a synchronous check-and-set within the single Node.js event loop can approximate the same guarantee — since Node is single-threaded, `bridge.assignTask()` is already atomic as long as it doesn't yield (no `await` between check and set).
+
+---
+
+## Decision 4: No Automatic Reassignment
+
+### What they chose
+When an agent's run fails or the process dies, the system detects it (stuck run detection), marks the run as failed, and optionally retries **on the same agent** once. It does NOT reassign the task to a different agent.
+
+### What they didn't choose
+- Automatic reassignment to another agent of the same role (like XO Org)
+- Automatic retry with exponential backoff
+- Dead-letter queue for failed tasks
+
+### Why
+Paperclip's philosophy is that the human board should make reassignment decisions. Their reasoning:
+1. **Context loss:** A new agent doesn't have the previous agent's work-in-progress. Reassignment means starting from scratch, which may not be what the operator wants.
+2. **Org chart semantics:** If Engineer #3's manager assigned them a task, reassigning it to Engineer #4 changes the delegation chain. The manager should decide this.
+3. **Debugging:** If a task consistently fails, automatic reassignment hides the problem. Manual recovery forces someone to investigate why.
+
+### Tradeoff
+- **Pro:** No surprise reassignments — the board always knows who owns what.
+- **Pro:** Failed tasks stay visible and require explicit action, preventing silent failure loops.
+- **Con:** More manual intervention needed. An offline agent's tasks sit idle until a human notices.
+- **Con:** Less resilient to agent failures — the system doesn't self-heal.
+
+### Implication for XO Org
+XO Org's automatic reassignment is a strength for its use case (multiple interchangeable agents). But XO Org should consider adding a `reassignable: boolean` flag on tasks, as its own spec notes — some tasks are agent-locked and shouldn't be shuffled.
+
+---
+
+## Decision 5: Company-Scoped Multi-Tenancy (Everything Belongs to a Company)
+
+### What they chose
+Every entity in the system — agents, tasks, goals, projects, budgets, approvals — belongs to exactly one company. Every database query includes a `company_id` filter.
+
+### What they didn't choose
+- Global workspace (all agents share everything)
+- User-scoped (each human operator gets their own space)
+- Project-scoped (projects as the top-level boundary)
+
+### Why
+Paperclip's vision is running multiple autonomous AI companies from one dashboard. The company abstraction allows:
+- Complete isolation between companies (an agent in Company A can't see Company B's data)
+- Independent budgets, goals, and org charts per company
+- Company portability (export/import entire companies)
+
+### Tradeoff
+- **Pro:** Clean multi-tenancy with strong data isolation.
+- **Pro:** A single operator can manage multiple AI businesses from one deployment.
+- **Con:** Everything must be company-scoped — cross-company collaboration isn't possible.
+- **Con:** More complex queries and data models (every table has a `company_id` column).
+
+### Implication for XO Org
+XO Org doesn't need this level of tenancy today, but the pattern is worth noting. If XO Org ever supports multiple workspaces, a similar "workspace_id on every entity" pattern would apply.
+
+---
+
+## Decision 6: Budget Enforcement as an Orchestration Concern (Not Just Reporting)
+
+### What they chose
+Budget enforcement is **active** — it pauses agents, cancels work, and blocks invocations. It's wired directly into the heartbeat invocation pipeline.
+
+### What they didn't choose
+- Passive cost reporting (track costs, show dashboards, but don't enforce)
+- Separate billing service that sends alerts
+- Pre-authorization model (check budget before every API call)
+
+### Why
+In an autonomous AI company, agents make their own decisions about what to work on. If cost tracking is purely passive, an agent can burn through its entire budget before anyone notices. Active enforcement means:
+- The system **physically prevents** overspend (can't start a run if budget is exceeded)
+- Active work is **cancelled immediately** when a hard threshold is crossed (not just flagged)
+- Recovery requires **human approval** (the board must raise the budget or keep the agent paused)
+
+This is the "hard-stop" philosophy — better to stop work and wait for a human than to let costs spiral.
+
+### Tradeoff
+- **Pro:** Impossible to exceed a hard budget limit (modulo the cost of the run that crosses the threshold).
+- **Pro:** Forces human review of spending before work resumes.
+- **Con:** Can be disruptive — an agent mid-task gets killed when the budget is hit.
+- **Con:** Budget evaluation runs on every cost event, adding latency to the cost reporting path.
+
+### Implication for XO Org
+This is the biggest takeaway for XO Org. Even a simplified version — "if agent.spent > agent.budget, block new task assignments" — would close XO Org's most significant gap. The key insight is that budget checks should happen **before work starts**, not after it finishes.
+
+---
+
+## Decision 7: Approvals as Multi-Layer Enforcement (Not Just a Status Check)
+
+### What they chose
+A `pending_approval` agent is blocked at four independent layers: auth middleware, agent service, heartbeat service, and routine scheduler. Even if one layer has a bug, the other three prevent the agent from doing anything.
+
+### What they didn't choose
+- Single check at the API route level
+- Flag on the agent record that services check before operations
+- Separate authorization service
+
+### Why
+Defense in depth. In a system where AI agents are autonomous actors, a single point of enforcement is a single point of failure. If the route-level check has a bug, a pending agent could slip through and start work. By checking at multiple layers, the system guarantees that a pending agent cannot:
+- Authenticate (auth middleware blocks the API key)
+- Be invoked (heartbeat service rejects wakeups)
+- Be scheduled (timer tick skips pending agents)
+- Be assigned routine work (routine scheduler excludes them)
+
+### Tradeoff
+- **Pro:** Extremely robust — a pending agent genuinely cannot do anything.
+- **Con:** Enforcement logic is scattered across four locations — harder to modify or debug.
+- **Con:** If the rules change (e.g., "pending agents can read but not write"), every layer needs updating.
+
+### Implication for XO Org
+XO Org's approval is a single check in the state machine. This is simpler and appropriate for XO Org's scale, but as the system grows, consider whether critical governance gates should be enforced at multiple layers.
+
+---
+
+## Decision 8: Session Management Owned by the Control Plane
+
+### What they chose
+The control plane owns session state — it's stored in `agent_task_sessions` and `agent_runtime_state` tables, serialized via adapter-specific session codecs.
+
+### What they didn't choose
+- Agents manage their own sessions (control plane is stateless)
+- Shared session store that both control plane and agents read/write
+- No sessions — every invocation starts fresh
+
+### Why
+If agents managed their own sessions, the control plane couldn't:
+- Resume a different agent on the same task (session state would be locked to the original agent)
+- Rotate sessions for context window management (compaction decisions)
+- Debug session issues (all state visible in the database)
+
+By owning sessions, the control plane can make decisions like "this session has been running for 200 turns, rotate to a fresh one with a handoff summary" without the agent's involvement.
+
+### Tradeoff
+- **Pro:** Full visibility into session state for debugging and monitoring.
+- **Pro:** Session compaction prevents context window exhaustion.
+- **Pro:** Session state survives agent process crashes.
+- **Con:** Adds complexity — every adapter needs a session codec.
+- **Con:** The control plane must understand adapter-specific session formats.
+
+### Implication for XO Org
+XO Org doesn't have sessions because agents are persistent HTTP clients, not spawned processes. But if XO Org ever tracks "work sessions" (agent checks out task → works → checks back in), storing that state server-side enables the same visibility and control benefits.
+
+---
+
+## Decision 9: Strict Org Tree (Not Flat Roles or Matrix)
+
+### What they chose
+A strict tree hierarchy via `reports_to` — one manager per agent, no cycles, no matrix reporting.
+
+### What they didn't choose
+- Flat role-based pools (like XO Org)
+- Matrix reporting (agent reports to multiple managers)
+- Dynamic team formation (agents form ad-hoc groups)
+
+### Why
+Paperclip models an AI company, and companies have org charts. The strict tree provides:
+- Clear delegation paths (manager → subordinate)
+- Unambiguous authority (one manager per agent)
+- Simple cycle prevention (tree traversal)
+
+Matrix reporting was explicitly considered and rejected for V1 because it complicates delegation semantics — if Agent A reports to both Manager X and Manager Y, who has authority to reassign A's work?
+
+### Tradeoff
+- **Pro:** Simple, well-understood model. Every agent has exactly one boss.
+- **Pro:** Delegation chains are unambiguous — the org chart IS the routing topology.
+- **Con:** Can't model cross-functional teams or shared resources.
+- **Con:** Less flexible than role pools for load distribution.
+
+### Implication for XO Org
+XO Org's flat role-based model is actually more flexible for task routing (any engineer can get any engineering task). The org tree makes more sense for Paperclip's "company simulation" metaphor. XO Org shouldn't adopt this pattern unless it moves toward modeling organizational hierarchy.
+
+---
+
+## Decision 10: Permissive State Machine (Most Transitions Allowed)
+
+### What they chose
+Paperclip's issue state machine allows most transitions. `backlog → todo → in_progress → in_review → done` is the happy path, but you can also go `in_progress → todo`, `in_review → blocked`, `blocked → in_progress`, etc.
+
+### What they didn't choose
+- Strict linear state machine (like XO Org's, where only defined transitions are valid)
+- Fully open (any status to any status)
+
+### Why
+In an autonomous AI company, rigid workflows slow things down. An agent discovers a blocker? It needs to mark the task `blocked` immediately, regardless of what state it was in. The board wants to re-open a completed task? That should just work.
+
+The side effects (setting/clearing timestamps) handle the bookkeeping automatically, so the state machine doesn't need to enforce a strict path — it just needs to enforce terminal states (`done` and `cancelled` can't transition out without explicit reopen).
+
+### Tradeoff
+- **Pro:** Flexible — agents and board can move tasks freely without fighting the state machine.
+- **Pro:** Fewer error cases — agents don't need to check "am I allowed to do this transition."
+- **Con:** Less structured — harder to reason about the expected flow of a task.
+- **Con:** No guard against mistakes — an agent could accidentally move a task backward.
+
+### Implication for XO Org
+XO Org's strict state machine is a strength for governance — it forces a defined workflow. This is the right choice for a system where you want predictable task flow. The tradeoff is that XO Org can't express "this task is blocked" without an explicit `blocked` status and transitions from every non-terminal state.
+
+---
+
+## Summary: Decision Patterns
+
+Looking across these decisions, a few meta-patterns emerge:
+
+| Pattern | Paperclip's Bias | XO Org's Bias |
+|---|---|---|
+| **Control authority** | Server-centric (push, spawn, enforce) | Agent-centric (pull, poll, report) |
+| **Failure handling** | Human-in-the-loop (manual recovery) | Self-healing (auto-reassignment) |
+| **State management** | Persistent (PostgreSQL, survives crashes) | Ephemeral (in-memory, fast but volatile) |
+| **Enforcement style** | Defense in depth (multi-layer) | Single checkpoint (state machine) |
+| **Flexibility vs structure** | Flexible (permissive state machine, broad permissions) | Structured (strict transitions, defined roles) |
+| **Scaling philosophy** | Vertical (one process, do more per machine) | Vertical (same, but even lighter) |
+
+Neither approach is universally better — they reflect different design goals. Paperclip optimizes for **control and visibility** (the board sees and controls everything). XO Org optimizes for **simplicity and agent autonomy** (agents self-organize with minimal overhead).

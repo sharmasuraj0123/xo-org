@@ -1,0 +1,290 @@
+---
+title: "Budget Enforcement"
+description: "Deep dive into Paperclip's cost tracking and budget enforcement — how spending is tracked, limits are enforced, and agents are auto-paused"
+---
+
+## Overview
+
+Paperclip tracks every LLM API call's cost and enforces budget limits at three levels: company, agent, and project. When spending exceeds a hard limit, the system automatically pauses the scope, cancels active work, and creates an approval for the board to resolve.
+
+---
+
+## Budget Architecture
+
+```mermaid
+graph TD
+    subgraph "Cost Ingestion"
+        AGENT["Agent reports cost<br/>POST /cost-events"]
+        COST["Cost Event Created<br/>{provider, model, tokens, cents}"]
+    end
+
+    subgraph "Budget Evaluation"
+        EVAL["evaluateCostEvent()"]
+        POLICIES["Load active policies<br/>(company, agent, project)"]
+        OBSERVE["Compute observed spend<br/>SUM(cost_cents) in window"]
+    end
+
+    subgraph "Threshold Checks"
+        SOFT{"Observed >= 80%<br/>of limit?"}
+        HARD{"Observed >= 100%<br/>of limit?"}
+    end
+
+    subgraph "Enforcement Actions"
+        WARN["Create soft incident<br/>Log warning"]
+        PAUSE["Pause scope<br/>Cancel all work<br/>Create hard incident<br/>+ approval request"]
+    end
+
+    AGENT --> COST
+    COST --> EVAL
+    EVAL --> POLICIES
+    POLICIES --> OBSERVE
+    OBSERVE --> SOFT
+    SOFT -->|"Yes"| WARN
+    SOFT -->|"No"| DONE["No action"]
+    OBSERVE --> HARD
+    HARD -->|"Yes"| PAUSE
+    HARD -->|"No"| DONE
+```
+
+---
+
+## Three-Level Budget Hierarchy
+
+Budgets cascade from company down to individual agents and projects. Each level can independently block work.
+
+```mermaid
+graph TD
+    COMPANY["Company Budget<br/><small>$500/month</small><br/><small>Blocks ALL agents if exceeded</small>"]
+    AGENT1["Agent: CTO<br/><small>$200/month</small><br/><small>Blocks this agent only</small>"]
+    AGENT2["Agent: Engineer<br/><small>$100/month</small>"]
+    AGENT3["Agent: Designer<br/><small>$50/month</small>"]
+    PROJECT["Project: MVP<br/><small>$300 lifetime</small><br/><small>Blocks project work only</small>"]
+
+    COMPANY --> AGENT1
+    COMPANY --> AGENT2
+    COMPANY --> AGENT3
+    COMPANY --> PROJECT
+```
+
+### Budget Policy Model
+
+Each budget is defined by a `budget_policy` record:
+
+| Field | What it controls |
+|---|---|
+| `scopeType` | `"company"`, `"agent"`, or `"project"` |
+| `scopeId` | The entity being budgeted |
+| `metric` | `"billed_cents"` (only supported metric in V1) |
+| `windowKind` | `"calendar_month_utc"` or `"lifetime"` |
+| `amount` | Budget limit in cents |
+| `warnPercent` | Soft alert threshold (default: 80%) |
+| `hardStopEnabled` | Auto-pause on breach (default: true) |
+| `notifyEnabled` | Create incident on soft threshold (default: true) |
+
+**Window mechanics:** Monthly budgets use UTC calendar month boundaries (1st at 00:00:00 UTC to 1st of next month). When the month rolls over, observed spend resets naturally because the query window shifts.
+
+---
+
+## Cost Event Ingestion
+
+When an agent completes an LLM API call, it reports the cost:
+
+```
+POST /companies/:companyId/cost-events
+{
+  "agentId": "uuid",
+  "issueId": "uuid",        // optional
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-5-20250514",
+  "inputTokens": 1234,
+  "outputTokens": 567,
+  "costCents": 89,
+  "occurredAt": "2026-02-17T20:25:00Z"
+}
+```
+
+### What happens on ingestion
+
+1. **Validate** — agent exists and belongs to company
+2. **Insert** cost event record
+3. **Update running totals** — recompute `spentMonthlyCents` for the agent and company
+4. **Evaluate budgets** — call `evaluateCostEvent()` which checks all applicable policies
+
+---
+
+## Budget Evaluation Flow
+
+`evaluateCostEvent()` is called after every cost event. It checks **all active policies** relevant to the event.
+
+```mermaid
+flowchart TD
+    EVENT["Cost event created"] --> LOAD["Load all active policies<br/>for this company"]
+    LOAD --> FILTER["Filter to relevant policies:<br/>- Company scope: always<br/>- Agent scope: if agentId matches<br/>- Project scope: if projectId matches"]
+
+    FILTER --> LOOP["For each relevant policy:"]
+    LOOP --> COMPUTE["Compute observed amount<br/>SUM(cost_cents) in window"]
+
+    COMPUTE --> SOFT{"observed >= ceil(amount * warnPercent / 100)?"}
+    SOFT -->|"No"| NEXT["Next policy"]
+    SOFT -->|"Yes"| SOFT_INC["Create SOFT incident<br/>(if not already created for this window)"]
+    SOFT_INC --> HARD{"observed >= amount?"}
+
+    HARD -->|"No"| NEXT
+    HARD -->|"Yes, hardStopEnabled"| HARD_ACTION["1. Resolve soft incidents<br/>2. Create HARD incident + approval<br/>3. PAUSE scope<br/>4. CANCEL all active work"]
+    HARD -->|"Yes, hardStop disabled"| NEXT
+
+    HARD_ACTION --> NEXT
+```
+
+---
+
+## Invocation Blocking
+
+Before every heartbeat run starts, `getInvocationBlock()` checks if the agent can work:
+
+```mermaid
+flowchart TD
+    START["getInvocationBlock(companyId, agentId, context)"] --> CO_PAUSED{"Company<br/>paused?"}
+
+    CO_PAUSED -->|"Yes"| BLOCK_CO["BLOCK: Company paused"]
+    CO_PAUSED -->|"No"| CO_BUDGET{"Company budget<br/>exceeded?"}
+
+    CO_BUDGET -->|"Yes"| BLOCK_CO2["BLOCK: Company budget exceeded"]
+    CO_BUDGET -->|"No"| AG_PAUSED{"Agent paused<br/>by budget?"}
+
+    AG_PAUSED -->|"Yes"| BLOCK_AG["BLOCK: Agent budget paused"]
+    AG_PAUSED -->|"No"| AG_BUDGET{"Agent budget<br/>exceeded?"}
+
+    AG_BUDGET -->|"Yes"| BLOCK_AG2["BLOCK: Agent budget exceeded"]
+    AG_BUDGET -->|"No"| PROJ{"Project ID<br/>provided?"}
+
+    PROJ -->|"No"| ALLOW["ALLOW: No blocks"]
+    PROJ -->|"Yes"| PJ_PAUSED{"Project paused<br/>by budget?"}
+
+    PJ_PAUSED -->|"Yes"| BLOCK_PJ["BLOCK: Project budget paused"]
+    PJ_PAUSED -->|"No"| PJ_BUDGET{"Project budget<br/>exceeded?"}
+
+    PJ_BUDGET -->|"Yes"| BLOCK_PJ2["BLOCK: Project budget exceeded"]
+    PJ_BUDGET -->|"No"| ALLOW
+```
+
+If any check returns a block, the heartbeat run is cancelled before it starts. The block includes a human-readable reason (e.g., "Agent is paused because its budget hard-stop was reached.").
+
+---
+
+## Auto-Pause Behavior
+
+When a hard budget threshold is crossed, the system takes immediate action:
+
+### 1. Pause the scope
+
+| Scope | What gets paused |
+|---|---|
+| Agent | `status = "paused"`, `pauseReason = "budget"` |
+| Project | `pauseReason = "budget"`, `pausedAt = now` |
+| Company | `status = "paused"`, `pauseReason = "budget"` |
+
+### 2. Cancel active work
+
+The heartbeat service's `cancelBudgetScopeWork()` hook fires:
+
+```mermaid
+flowchart TD
+    PAUSE["Scope paused by budget"] --> CANCEL_RUNS["Cancel all running<br/>heartbeat runs for scope"]
+    CANCEL_RUNS --> CANCEL_QUEUED["Cancel all queued<br/>heartbeat runs for scope"]
+    CANCEL_QUEUED --> CANCEL_WAKEUPS["Cancel all pending<br/>wakeup requests for scope"]
+```
+
+For agent scope, this means the agent's running process gets SIGTERM. For company scope, ALL agents in the company get cancelled.
+
+### 3. Create incident + approval
+
+A `budget_incident` record is created with `thresholdType: "hard"`, and an automatic `approval` of type `budget_override_required` is created for the board to resolve.
+
+---
+
+## Incident Resolution
+
+The board resolves budget incidents via the approvals UI:
+
+```mermaid
+flowchart TD
+    INCIDENT["Budget incident<br/>(hard threshold)"] --> BOARD["Board reviews incident"]
+
+    BOARD --> RAISE["Action: raise_budget_and_resume"]
+    BOARD --> KEEP["Action: keep_paused"]
+
+    RAISE --> VALIDATE{"New amount ><br/>observed spend?"}
+    VALIDATE -->|"Yes"| UPDATE["Update policy with new amount<br/>Resume scope<br/>Resolve all open incidents"]
+    VALIDATE -->|"No"| REJECT_RAISE["Reject: new amount must<br/>exceed current spend"]
+
+    KEEP --> DISMISS["Dismiss incident<br/>Scope stays paused"]
+```
+
+### Key behavior: `pauseReason` prevents interference
+
+The system only resumes scopes paused for budget reasons. If an admin manually paused an agent, a budget resume won't accidentally un-pause it. The `pauseReason` field (`"manual"` vs `"budget"` vs `"system"`) ensures clean separation.
+
+---
+
+## Cost Rollups
+
+V1 uses read-time aggregate queries rather than materialized views:
+
+| Endpoint | What it returns |
+|---|---|
+| `GET /costs/summary` | Total spend, budget, utilization % |
+| `GET /costs/by-agent` | Per-agent cost breakdown with token counts |
+| `GET /costs/by-provider` | Per-provider/model breakdown |
+| `GET /costs/by-project` | Per-project costs (traced through runs → issues → projects) |
+| `GET /costs/by-biller` | Per-billing-entity breakdown |
+| `GET /costs/window-spend` | Rolling windows: 5h, 24h, 7d (by provider) |
+
+### Real-time tracking fields
+
+Both `agents` and `companies` tables have `spentMonthlyCents` fields that are updated on every cost event. This allows the dashboard to show current utilization without running aggregate queries.
+
+---
+
+## Provider Quota Windows
+
+Adapters that support it can report provider-level rate limits back to the dashboard:
+
+```json
+{
+  "provider": "anthropic",
+  "ok": true,
+  "windows": [
+    { "label": "5h", "usedPercent": 72, "resetsAt": "2026-02-17T23:00:00Z" },
+    { "label": "7d", "usedPercent": 45, "resetsAt": "2026-02-21T00:00:00Z" }
+  ]
+}
+```
+
+This shows not just Paperclip's own budget limits, but also the provider's rate limits — so the board can see both constraints.
+
+---
+
+## Finance Events (Beyond LLM Costs)
+
+Separate from cost events, `finance_events` track broader financial transactions:
+
+| Field | Purpose |
+|---|---|
+| `eventKind` | `"inference_charge"`, `"platform_fee"`, `"credit_purchase"`, etc. |
+| `direction` | `"debit"` or `"credit"` |
+| `amountCents` | Transaction amount |
+| `biller` | Who charged |
+| `estimated` | Whether this is a projected vs actual cost |
+
+Finance events don't trigger budget enforcement — they're an accounting layer on top of cost events.
+
+---
+
+## Limitations
+
+- **Single metric:** Only `billed_cents` is supported. No token-count-based budgets or per-model limits.
+- **Read-time rollups:** Aggregate queries run on every request. At scale, this could need materialized rollups.
+- **Monthly window only:** Calendar month UTC. No weekly, daily, or custom windows (though `lifetime` is supported for projects).
+- **No forecasting:** The system reacts to spend — it doesn't predict when a budget will be exhausted.
+- **Agent self-reporting:** Agents report their own costs. A malicious agent could underreport. (Mitigated by the fact that agents authenticate with API keys scoped to their identity.)
