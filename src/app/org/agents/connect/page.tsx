@@ -61,12 +61,13 @@ export default function ConnectAgentPage() {
   // Identity
   const [agentName, setAgentName] = useState("")
   const [agentId, setAgentId] = useState("")
-  const [description, setDescription] = useState("")
+  const [description] = useState("")
 
   // Adapter
   const [adapterType, setAdapterType] = useState("openclaw_gateway")
-  const [gatewayUrl, setGatewayUrl] = useState("http://127.0.0.1:18789")
+  const [gatewayUrl, setGatewayUrl] = useState("ws://127.0.0.1:18789")
   const [gatewayToken, setGatewayToken] = useState("xo")
+  const [sessionKeyStrategy] = useState("issue")
   const [payloadTemplate, setPayloadTemplate] = useState(
     JSON.stringify(
       { agentId: "{{agent.id}}", metadata: { team: "platform" } },
@@ -173,6 +174,7 @@ export default function ConnectAgentPage() {
           adapterType,
           gatewayUrl: gatewayUrl.trim(),
           gatewayToken: gatewayToken.trim(),
+          sessionKeyStrategy,
           payloadTemplate: parsedPayload,
           heartbeat: {
             enabled: heartbeatEnabled,
@@ -237,26 +239,6 @@ export default function ConnectAgentPage() {
                       placeholder="e.g. VP of Engineering"
                       value={agentName}
                       onChange={(e) => handleNameChange(e.target.value)}
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="agent-id">Agent ID</Label>
-                    <Input
-                      id="agent-id"
-                      placeholder="e.g. vp-engineering"
-                      value={agentId}
-                      onChange={(e) => setAgentId(e.target.value)}
-                      className="font-mono text-sm"
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="description">Description</Label>
-                    <Textarea
-                      id="description"
-                      placeholder="What does this agent do?"
-                      className="min-h-16 resize-none"
-                      value={description}
-                      onChange={(e) => setDescription(e.target.value)}
                     />
                   </div>
                 </CardContent>

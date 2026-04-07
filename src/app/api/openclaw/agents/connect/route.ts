@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { testEnvironment } from "../../../lib/openclaw-adapter"
+import { probeGateway, type GatewayConfig } from "../../../lib/openclaw-gateway"
 import { saveAgent } from "../../../lib/openclaw-store"
 import { registerAgent } from "../../../lib/bridge"
 import { generateToken } from "../../../lib/auth"
@@ -9,25 +9,7 @@ import type { HeartbeatConfig } from "../../../lib/openclaw-store"
  * POST /api/openclaw/agents/connect
  *
  * Register an OpenClaw Gateway agent with the XO Org bridge.
- * Matches the Paperclip pattern: Gateway URL + payload template.
- *
- * Body:
- *  {
- *    agentId: "aria",
- *    name: "Aria",
- *    role: "Engineering",
- *    model: "claude-opus-4",
- *    modelProvider: "anthropic",
- *    permission: "member",
- *    channels: ["general"],
- *    description: "...",
- *    systemInstructions: "...",
- *    adapterType: "openclaw_gateway",
- *    gatewayUrl: "http://127.0.0.1:18789",
- *    gatewayToken: "xo",
- *    payloadTemplate: { "agentId": "{{agent.id}}", ... },
- *    heartbeat: { enabled: false, intervalSec: 300, wakeOnDemand: true, maxConcurrentRuns: 1 }
- *  }
+ * Validates Gateway connectivity via WebSocket V3 probe before registering.
  */
 export async function POST(req: Request) {
   let body: Record<string, unknown>
@@ -40,37 +22,53 @@ export async function POST(req: Request) {
   const {
     agentId, name, role, model, modelProvider, permission,
     channels, description, systemInstructions,
-    adapterType, gatewayUrl, gatewayToken, payloadTemplate, heartbeat,
+    adapterType, gatewayUrl, gatewayToken, gatewayPassword,
+    privateKeyPem, disableDeviceAuth, autoPairOnFirstConnect,
+    sessionKeyStrategy, fixedSessionKey,
+    payloadTemplate, heartbeat,
   } = body as {
-    agentId?: string
-    name?: string
-    role?: string
-    model?: string
-    modelProvider?: string
-    permission?: string
-    channels?: string[]
-    description?: string
-    systemInstructions?: string
-    adapterType?: string
-    gatewayUrl?: string
-    gatewayToken?: string
-    payloadTemplate?: Record<string, unknown>
-    heartbeat?: Partial<HeartbeatConfig>
+    agentId?: string; name?: string; role?: string; model?: string
+    modelProvider?: string; permission?: string; channels?: string[]
+    description?: string; systemInstructions?: string; adapterType?: string
+    gatewayUrl?: string; gatewayToken?: string; gatewayPassword?: string
+    privateKeyPem?: string; disableDeviceAuth?: boolean; autoPairOnFirstConnect?: boolean
+    sessionKeyStrategy?: string; fixedSessionKey?: string
+    payloadTemplate?: Record<string, unknown>; heartbeat?: Partial<HeartbeatConfig>
   }
 
   if (!agentId?.trim()) {
     return NextResponse.json({ ok: false, error: "agentId is required" }, { status: 400 })
   }
-
   if (!gatewayUrl?.trim()) {
     return NextResponse.json({ ok: false, error: "gatewayUrl is required" }, { status: 400 })
   }
 
-  // Test Gateway reachability before registering
-  const envTest = await testEnvironment(gatewayUrl, gatewayToken)
-  if (envTest.status === "fail") {
+  // Validate URL protocol
+  try {
+    const parsed = new URL(gatewayUrl)
+    if (!["ws:", "wss:"].includes(parsed.protocol)) {
+      return NextResponse.json(
+        { ok: false, error: "Gateway URL must use ws:// or wss:// protocol" },
+        { status: 400 }
+      )
+    }
+  } catch {
+    return NextResponse.json({ ok: false, error: "Invalid Gateway URL" }, { status: 400 })
+  }
+
+  // Probe Gateway via WebSocket before registering
+  const config: GatewayConfig = {
+    url: gatewayUrl.trim(),
+    authToken: gatewayToken?.trim() || undefined,
+    password: gatewayPassword || undefined,
+    disableDeviceAuth: disableDeviceAuth ?? false,
+    autoPairOnFirstConnect: autoPairOnFirstConnect ?? true,
+  }
+
+  const probe = await probeGateway(config)
+  if (probe.status === "failed") {
     return NextResponse.json(
-      { ok: false, error: envTest.checks.find((c) => c.level === "error")?.message ?? "Gateway unreachable", checks: envTest.checks },
+      { ok: false, error: `Cannot reach Gateway: ${probe.error ?? "connection failed"}`, latencyMs: probe.latencyMs },
       { status: 502 }
     )
   }
@@ -86,7 +84,6 @@ export async function POST(req: Request) {
     })
     const token = generateToken(bridgeAgent.id)
 
-    // Store with full Paperclip-style config
     const agent = saveAgent({
       agentId: agentId.trim(),
       name: name?.trim() ?? agentId.trim(),
@@ -99,7 +96,13 @@ export async function POST(req: Request) {
       systemInstructions: systemInstructions ?? "",
       adapterType: (adapterType as "openclaw_gateway" | "http") ?? "openclaw_gateway",
       gatewayUrl: gatewayUrl.trim(),
-      gatewayToken: gatewayToken?.trim() ?? "xo",
+      gatewayToken: gatewayToken?.trim() ?? "",
+      gatewayPassword: gatewayPassword || undefined,
+      privateKeyPem: privateKeyPem || undefined,
+      disableDeviceAuth: disableDeviceAuth ?? false,
+      autoPairOnFirstConnect: autoPairOnFirstConnect ?? true,
+      sessionKeyStrategy: (sessionKeyStrategy as "issue" | "fixed" | "run") ?? "issue",
+      fixedSessionKey: fixedSessionKey || undefined,
       payloadTemplate: payloadTemplate ?? { agentId: "{{agent.id}}" },
       heartbeat: {
         enabled: heartbeat?.enabled ?? false,
@@ -122,10 +125,11 @@ export async function POST(req: Request) {
         name: agent.name,
         gatewayUrl: agent.gatewayUrl,
         adapterType: agent.adapterType,
+        sessionKeyStrategy: agent.sessionKeyStrategy,
         heartbeat: agent.heartbeat,
         status: agent.status,
         token,
-        environmentTest: envTest,
+        gatewayProbe: { status: probe.status, latencyMs: probe.latencyMs },
       },
     })
   } catch (err) {

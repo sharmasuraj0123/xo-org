@@ -1,24 +1,24 @@
 import { NextResponse } from "next/server"
-import { invokeAgent, interpolatePayload } from "../../../lib/openclaw-adapter"
+import {
+  executeAgent, resolveSessionKey,
+  type GatewayConfig, type WakeContext, type AgentEvent,
+} from "../../../lib/openclaw-gateway"
 import { getAgent, updateAgent } from "../../../lib/openclaw-store"
 import { appendMessage, notifySubscribers } from "../../../lib/bridge"
 
 /**
  * POST /api/openclaw/agents/invoke
  *
- * Send a prompt to an OpenClaw agent through its Gateway.
- * Uses the Paperclip pattern: payload template interpolation + sessions_send.
- * Fire-and-forget — does not wait for agent response.
- *
- * Body:
- *  {
- *    agentId: "aria",
- *    prompt: "Review PR #142 for security issues",
- *    fromAgent?: "nova",
- *    taskId?: "t_abc",
- *    taskTitle?: "Review PR #142",
- *    runSource?: "assignment" | "timer"
- *  }
+ * Execute the full 9-step OpenClaw Gateway V3 pipeline:
+ *  1. Validate config
+ *  2. Build payloads (wakePayload, paperclipEnv, wakeText, agentParams)
+ *  3. Resolve device identity (ED25519)
+ *  4. WebSocket connection + challenge handshake
+ *  5. Send agent request
+ *  6. Stream agent events (real-time)
+ *  7. Wait for completion (agent.wait)
+ *  8. Assemble result (priority chain)
+ *  9. Cleanup (close WebSocket)
  */
 export async function POST(req: Request) {
   let body: Record<string, unknown>
@@ -28,74 +28,80 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 })
   }
 
-  const { agentId, prompt, fromAgent, taskId, taskTitle, runSource } = body as {
+  const { agentId, prompt, fromAgent, taskId, issueId, runSource } = body as {
     agentId?: string
     prompt?: string
     fromAgent?: string
     taskId?: string
-    taskTitle?: string
+    issueId?: string
     runSource?: string
   }
 
-  if (!agentId) {
-    return NextResponse.json({ ok: false, error: "agentId is required" }, { status: 400 })
-  }
-  if (!prompt) {
-    return NextResponse.json({ ok: false, error: "prompt is required" }, { status: 400 })
-  }
+  if (!agentId) return NextResponse.json({ ok: false, error: "agentId is required" }, { status: 400 })
+  if (!prompt) return NextResponse.json({ ok: false, error: "prompt is required" }, { status: 400 })
 
   const agent = getAgent(agentId)
   if (!agent || agent.status !== "connected") {
-    return NextResponse.json(
-      { ok: false, error: `Agent '${agentId}' is not connected` },
-      { status: 404 }
-    )
+    return NextResponse.json({ ok: false, error: `Agent '${agentId}' is not connected` }, { status: 404 })
   }
 
-  // Build run context for payload template interpolation
   const runId = `run_${Date.now().toString(16)}_${Math.random().toString(36).slice(2, 8)}`
-  const templateContext: Record<string, string> = {
-    "agent.id": agent.agentId,
-    "agent.name": agent.name,
-    "agent.role": agent.role,
-    "agent.model": agent.model,
-    "run.id": runId,
-    "run.source": runSource ?? "manual",
-    "task.id": taskId ?? "",
-    "task.title": taskTitle ?? "",
-    "prompt": prompt,
-  }
-
-  // Interpolate payload template
-  const interpolatedPayload = interpolatePayload(agent.payloadTemplate, templateContext)
-
   const caller = fromAgent ?? "org"
 
-  // Log the invocation in the bridge
+  // Build Gateway config from stored agent
+  const gatewayConfig: GatewayConfig = {
+    url: agent.gatewayUrl,
+    authToken: agent.gatewayToken || undefined,
+    password: agent.gatewayPassword,
+    privateKeyPem: agent.privateKeyPem,
+    disableDeviceAuth: agent.disableDeviceAuth,
+    autoPairOnFirstConnect: agent.autoPairOnFirstConnect,
+    sessionKeyStrategy: agent.sessionKeyStrategy,
+    sessionKey: agent.fixedSessionKey,
+    payloadTemplate: agent.payloadTemplate,
+    timeoutSec: 120,
+  }
+
+  // Build wake context (Step 2 from deep dive)
+  const wakeCtx: WakeContext = {
+    runId,
+    agentId,
+    agentName: agent.name,
+    taskId,
+    issueId,
+    wakeReason: runSource ?? "manual",
+    promptTemplate: prompt,
+  }
+
+  // Log invocation in bridge
   const callMsg = appendMessage(caller, agentId, "task", {
     text: prompt,
     metadata: {
-      via: "openclaw_gateway",
+      via: "openclaw_gateway_ws_v3",
       runId,
       runSource: runSource ?? "manual",
-      gatewayUrl: agent.gatewayUrl,
-      payload: interpolatedPayload,
+      sessionKey: resolveSessionKey(gatewayConfig, { taskId, issueId, runId }),
     },
   })
   notifySubscribers(callMsg)
 
-  try {
-    // Determine sessionKey from payload template or use agentId
-    const sessionKey = (interpolatedPayload.sessionKey as string)
-      ?? (interpolatedPayload.agentId as string)
-      ?? agent.agentId
+  // Collect logs for bridge
+  const logs: string[] = []
 
-    const result = await invokeAgent(
-      agent.gatewayUrl,
-      agent.gatewayToken,
-      sessionKey,
-      prompt,
-      { model: agent.model, metadata: interpolatedPayload }
+  try {
+    // Execute the full 9-step pipeline
+    const result = await executeAgent(
+      gatewayConfig,
+      wakeCtx,
+      (event: AgentEvent) => {
+        // Real-time event callback — could push via SSE
+        if (event.stream === "assistant" && event.data.delta) {
+          // Future: stream to dashboard
+        }
+      },
+      (stream, chunk) => {
+        logs.push(`[${stream}] ${chunk}`)
+      }
     )
 
     // Update agent state
@@ -104,35 +110,53 @@ export async function POST(req: Request) {
       totalRuns: agent.totalRuns + 1,
     })
 
-    // Log result (fire-and-forget acknowledgment)
+    // Log result in bridge
+    const resultText = result.resultText ?? (result.error ? `Failed: ${result.error}` : "Completed")
     const resultMsg = appendMessage(agentId, caller, "reply", {
-      text: "Task delivered to OpenClaw Gateway",
-      metadata: { via: "openclaw_gateway", runId, result },
+      text: resultText,
+      metadata: {
+        via: "openclaw_gateway_ws_v3",
+        runId,
+        exitCode: result.exitCode,
+        signal: result.signal,
+        timedOut: result.timedOut,
+        provider: result.provider,
+        model: result.model,
+        usage: result.usage,
+        costUsd: result.costUsd,
+        summary: result.summary,
+        eventCount: result.events.length,
+        runtimeServices: result.runtimeServices,
+      },
     }, callMsg.id)
     notifySubscribers(resultMsg)
 
     return NextResponse.json({
-      ok: true,
+      ok: result.exitCode === 0,
       data: {
         agentId,
         runId,
-        gatewayUrl: agent.gatewayUrl,
-        delivered: true,
-        result,
+        exitCode: result.exitCode,
+        signal: result.signal,
+        timedOut: result.timedOut,
+        provider: result.provider,
+        model: result.model,
+        usage: result.usage,
+        costUsd: result.costUsd,
+        resultText: result.resultText,
+        summary: result.summary,
+        eventCount: result.events.length,
         callId: callMsg.id,
       },
+      error: result.error,
     })
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err)
-
     appendMessage(agentId, caller, "reply", {
-      text: `Invocation failed: ${errorMsg}`,
-      metadata: { via: "openclaw_gateway", runId, error: errorMsg },
+      text: `Execution failed: ${errorMsg}`,
+      metadata: { via: "openclaw_gateway_ws_v3", runId, error: errorMsg },
     }, callMsg.id)
 
-    return NextResponse.json(
-      { ok: false, error: `Gateway invocation failed: ${errorMsg}`, runId },
-      { status: 502 }
-    )
+    return NextResponse.json({ ok: false, error: errorMsg, runId }, { status: 502 })
   }
 }

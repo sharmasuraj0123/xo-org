@@ -34,10 +34,22 @@ export interface OpenClawAgent {
   /** Adapter type */
   adapterType: "openclaw_gateway" | "http"
 
-  /** OpenClaw Gateway URL (e.g. http://127.0.0.1:18789) */
+  /** OpenClaw Gateway WebSocket URL (e.g. ws://127.0.0.1:18789) */
   gatewayUrl: string
-  /** Bearer token for Gateway auth */
+  /** Auth token for Gateway */
   gatewayToken: string
+  /** Optional password auth */
+  gatewayPassword?: string
+  /** ED25519 private key PEM for device auth (empty = ephemeral) */
+  privateKeyPem?: string
+  /** Disable ED25519 device signing */
+  disableDeviceAuth?: boolean
+  /** Auto-approve device pairing on first connect */
+  autoPairOnFirstConnect: boolean
+  /** Session key strategy */
+  sessionKeyStrategy: "issue" | "fixed" | "run"
+  /** Fixed session key (when strategy = "fixed") */
+  fixedSessionKey?: string
   /** Payload template JSON — interpolated with context vars on invocation */
   payloadTemplate: Record<string, unknown>
 
