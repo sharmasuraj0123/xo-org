@@ -1,19 +1,23 @@
 import { NextResponse } from "next/server"
-import { invokeAgent } from "../../../lib/openclaw-adapter"
-import { getAgent } from "../../../lib/openclaw-store"
+import { invokeAgent, interpolatePayload } from "../../../lib/openclaw-adapter"
+import { getAgent, updateAgent } from "../../../lib/openclaw-store"
 import { appendMessage, notifySubscribers } from "../../../lib/bridge"
 
 /**
  * POST /api/openclaw/agents/invoke
  *
- * Send a prompt to an OpenClaw agent through the Gateway.
- * This is the task bridge: XO Org → Gateway → Agent.
+ * Send a prompt to an OpenClaw agent through its Gateway.
+ * Uses the Paperclip pattern: payload template interpolation + sessions_send.
+ * Fire-and-forget — does not wait for agent response.
  *
  * Body:
  *  {
  *    agentId: "aria",
  *    prompt: "Review PR #142 for security issues",
- *    fromAgent?: "nova"    // Who sent this (for bridge logging)
+ *    fromAgent?: "nova",
+ *    taskId?: "t_abc",
+ *    taskTitle?: "Review PR #142",
+ *    runSource?: "assignment" | "timer"
  *  }
  */
 export async function POST(req: Request) {
@@ -24,10 +28,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 })
   }
 
-  const { agentId, prompt, fromAgent } = body as {
+  const { agentId, prompt, fromAgent, taskId, taskTitle, runSource } = body as {
     agentId?: string
     prompt?: string
     fromAgent?: string
+    taskId?: string
+    taskTitle?: string
+    runSource?: string
   }
 
   if (!agentId) {
@@ -40,29 +47,67 @@ export async function POST(req: Request) {
   const agent = getAgent(agentId)
   if (!agent || agent.status !== "connected") {
     return NextResponse.json(
-      { ok: false, error: `Agent '${agentId}' is not connected via OpenClaw` },
+      { ok: false, error: `Agent '${agentId}' is not connected` },
       { status: 404 }
     )
   }
+
+  // Build run context for payload template interpolation
+  const runId = `run_${Date.now().toString(16)}_${Math.random().toString(36).slice(2, 8)}`
+  const templateContext: Record<string, string> = {
+    "agent.id": agent.agentId,
+    "agent.name": agent.name,
+    "agent.role": agent.role,
+    "agent.model": agent.model,
+    "run.id": runId,
+    "run.source": runSource ?? "manual",
+    "task.id": taskId ?? "",
+    "task.title": taskTitle ?? "",
+    "prompt": prompt,
+  }
+
+  // Interpolate payload template
+  const interpolatedPayload = interpolatePayload(agent.payloadTemplate, templateContext)
 
   const caller = fromAgent ?? "org"
 
   // Log the invocation in the bridge
   const callMsg = appendMessage(caller, agentId, "task", {
     text: prompt,
-    metadata: { via: "openclaw", sessionKey: agent.sessionKey },
+    metadata: {
+      via: "openclaw_gateway",
+      runId,
+      runSource: runSource ?? "manual",
+      gatewayUrl: agent.gatewayUrl,
+      payload: interpolatedPayload,
+    },
   })
   notifySubscribers(callMsg)
 
   try {
-    const result = await invokeAgent(agent.sessionKey, prompt, {
-      model: agent.model,
+    // Determine sessionKey from payload template or use agentId
+    const sessionKey = (interpolatedPayload.sessionKey as string)
+      ?? (interpolatedPayload.agentId as string)
+      ?? agent.agentId
+
+    const result = await invokeAgent(
+      agent.gatewayUrl,
+      agent.gatewayToken,
+      sessionKey,
+      prompt,
+      { model: agent.model, metadata: interpolatedPayload }
+    )
+
+    // Update agent state
+    updateAgent(agentId, {
+      lastHeartbeatAt: Date.now(),
+      totalRuns: agent.totalRuns + 1,
     })
 
-    // Log result
+    // Log result (fire-and-forget acknowledgment)
     const resultMsg = appendMessage(agentId, caller, "reply", {
-      text: "Task received via OpenClaw Gateway",
-      metadata: { via: "openclaw", result },
+      text: "Task delivered to OpenClaw Gateway",
+      metadata: { via: "openclaw_gateway", runId, result },
     }, callMsg.id)
     notifySubscribers(resultMsg)
 
@@ -70,7 +115,9 @@ export async function POST(req: Request) {
       ok: true,
       data: {
         agentId,
-        sessionKey: agent.sessionKey,
+        runId,
+        gatewayUrl: agent.gatewayUrl,
+        delivered: true,
         result,
         callId: callMsg.id,
       },
@@ -78,14 +125,13 @@ export async function POST(req: Request) {
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err)
 
-    // Log failure
     appendMessage(agentId, caller, "reply", {
       text: `Invocation failed: ${errorMsg}`,
-      metadata: { via: "openclaw", error: errorMsg },
+      metadata: { via: "openclaw_gateway", runId, error: errorMsg },
     }, callMsg.id)
 
     return NextResponse.json(
-      { ok: false, error: `Gateway invocation failed: ${errorMsg}` },
+      { ok: false, error: `Gateway invocation failed: ${errorMsg}`, runId },
       { status: 502 }
     )
   }

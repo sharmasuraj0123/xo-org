@@ -1,35 +1,35 @@
 import { NextResponse } from "next/server"
-import { isOpenClawConfigured, listGatewaySessions, pingGateway } from "../../../lib/openclaw-adapter"
-import { saveAgent, getAgent } from "../../../lib/openclaw-store"
+import { testEnvironment } from "../../../lib/openclaw-adapter"
+import { saveAgent } from "../../../lib/openclaw-store"
 import { registerAgent } from "../../../lib/bridge"
 import { generateToken } from "../../../lib/auth"
+import type { HeartbeatConfig } from "../../../lib/openclaw-store"
 
 /**
  * POST /api/openclaw/agents/connect
  *
- * Connect an OpenClaw Gateway agent to the XO Org bridge.
+ * Register an OpenClaw Gateway agent with the XO Org bridge.
+ * Matches the Paperclip pattern: Gateway URL + payload template.
  *
  * Body:
  *  {
- *    agentId: "aria",             // ID to register in the bridge
- *    sessionKey: "agent:main:main", // OpenClaw Gateway session key
- *    name?: "Aria",               // Display name
- *    role?: "Engineering",        // Bridge role
- *    model?: "claude-opus-4",     // Model identifier
- *    channels?: ["general"]       // Channels to join
+ *    agentId: "aria",
+ *    name: "Aria",
+ *    role: "Engineering",
+ *    model: "claude-opus-4",
+ *    modelProvider: "anthropic",
+ *    permission: "member",
+ *    channels: ["general"],
+ *    description: "...",
+ *    systemInstructions: "...",
+ *    adapterType: "openclaw_gateway",
+ *    gatewayUrl: "http://127.0.0.1:18789",
+ *    gatewayToken: "xo",
+ *    payloadTemplate: { "agentId": "{{agent.id}}", ... },
+ *    heartbeat: { enabled: false, intervalSec: 300, wakeOnDemand: true, maxConcurrentRuns: 1 }
  *  }
- *
- * If sessionKey is omitted, lists available sessions from the Gateway
- * so the user can pick one.
  */
 export async function POST(req: Request) {
-  if (!isOpenClawConfigured()) {
-    return NextResponse.json(
-      { ok: false, error: "OpenClaw Gateway not configured. Set OPENCLAW_GATEWAY_URL." },
-      { status: 503 }
-    )
-  }
-
   let body: Record<string, unknown>
   try {
     body = await req.json()
@@ -37,121 +37,100 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 })
   }
 
-  const { agentId, sessionKey, name, role, model, channels } = body as {
+  const {
+    agentId, name, role, model, modelProvider, permission,
+    channels, description, systemInstructions,
+    adapterType, gatewayUrl, gatewayToken, payloadTemplate, heartbeat,
+  } = body as {
     agentId?: string
-    sessionKey?: string
     name?: string
     role?: string
     model?: string
+    modelProvider?: string
+    permission?: string
     channels?: string[]
+    description?: string
+    systemInstructions?: string
+    adapterType?: string
+    gatewayUrl?: string
+    gatewayToken?: string
+    payloadTemplate?: Record<string, unknown>
+    heartbeat?: Partial<HeartbeatConfig>
   }
 
-  // If no sessionKey, return available sessions for the user to pick
-  if (!sessionKey) {
-    try {
-      const ping = await pingGateway()
-      if (!ping.ok) {
-        return NextResponse.json(
-          { ok: false, error: `Cannot reach Gateway at ${ping.url}` },
-          { status: 502 }
-        )
-      }
-      const sessions = await listGatewaySessions()
-      return NextResponse.json({
-        ok: true,
-        data: {
-          action: "pick_session",
-          gatewayUrl: ping.url,
-          latencyMs: ping.latencyMs,
-          sessions: sessions.map((s) => ({
-            key: s.key,
-            sessionId: s.sessionId,
-            model: s.model,
-            modelProvider: s.modelProvider,
-            totalTokens: s.totalTokens,
-            updatedAt: s.updatedAt,
-          })),
-        },
-      })
-    } catch (err) {
-      return NextResponse.json(
-        { ok: false, error: `Gateway error: ${err instanceof Error ? err.message : String(err)}` },
-        { status: 502 }
-      )
-    }
-  }
-
-  if (!agentId) {
+  if (!agentId?.trim()) {
     return NextResponse.json({ ok: false, error: "agentId is required" }, { status: 400 })
   }
 
-  // Check if already connected
-  const existing = getAgent(agentId)
-  if (existing?.status === "connected") {
+  if (!gatewayUrl?.trim()) {
+    return NextResponse.json({ ok: false, error: "gatewayUrl is required" }, { status: 400 })
+  }
+
+  // Test Gateway reachability before registering
+  const envTest = await testEnvironment(gatewayUrl, gatewayToken)
+  if (envTest.status === "fail") {
     return NextResponse.json(
-      { ok: false, error: `Agent '${agentId}' is already connected` },
-      { status: 409 }
+      { ok: false, error: envTest.checks.find((c) => c.level === "error")?.message ?? "Gateway unreachable", checks: envTest.checks },
+      { status: 502 }
     )
   }
 
-  // Verify the session exists in the Gateway
+  // Register in XO Org bridge
   try {
-    const sessions = await listGatewaySessions()
-    const session = sessions.find((s) => s.key === sessionKey)
-    if (!session) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: `Session '${sessionKey}' not found in Gateway`,
-          availableSessions: sessions.map((s) => s.key),
-        },
-        { status: 404 }
-      )
-    }
-
-    // Register in XO Org bridge
-    const agentRole = role ?? "Engineering"
-    const agentChannels = channels ?? ["general"]
     const bridgeAgent = registerAgent({
-      id: agentId,
-      name: name ?? agentId,
-      role: agentRole as "Engineering",
-      model: model ?? session.model ?? "unknown",
-      channels: agentChannels,
+      id: agentId.trim(),
+      name: name?.trim() ?? agentId.trim(),
+      role: (role ?? "Engineering") as "Engineering",
+      model: model ?? "claude-sonnet",
+      channels: channels ?? ["general"],
     })
     const token = generateToken(bridgeAgent.id)
 
-    // Store OpenClaw ↔ Bridge mapping
+    // Store with full Paperclip-style config
     const agent = saveAgent({
-      agentId,
-      sessionKey,
-      name: name ?? agentId,
-      role: agentRole,
-      model: model ?? session.model ?? "unknown",
-      channels: agentChannels,
+      agentId: agentId.trim(),
+      name: name?.trim() ?? agentId.trim(),
+      role: role ?? "Engineering",
+      model: model ?? "claude-sonnet",
+      modelProvider: modelProvider ?? "anthropic",
+      channels: channels ?? ["general"],
+      permission: permission ?? "member",
+      description: description ?? "",
+      systemInstructions: systemInstructions ?? "",
+      adapterType: (adapterType as "openclaw_gateway" | "http") ?? "openclaw_gateway",
+      gatewayUrl: gatewayUrl.trim(),
+      gatewayToken: gatewayToken?.trim() ?? "xo",
+      payloadTemplate: payloadTemplate ?? { agentId: "{{agent.id}}" },
+      heartbeat: {
+        enabled: heartbeat?.enabled ?? false,
+        intervalSec: heartbeat?.intervalSec ?? 300,
+        wakeOnDemand: heartbeat?.wakeOnDemand ?? true,
+        maxConcurrentRuns: heartbeat?.maxConcurrentRuns ?? 1,
+      },
       token,
       status: "connected",
       connectedAt: Date.now(),
       updatedAt: Date.now(),
-      totalTokens: session.totalTokens ?? 0,
+      lastHeartbeatAt: null,
+      totalRuns: 0,
     })
 
     return NextResponse.json({
       ok: true,
       data: {
         agentId: agent.agentId,
-        sessionKey: agent.sessionKey,
         name: agent.name,
-        role: agent.role,
-        model: agent.model,
-        channels: agent.channels,
-        token,
+        gatewayUrl: agent.gatewayUrl,
+        adapterType: agent.adapterType,
+        heartbeat: agent.heartbeat,
         status: agent.status,
+        token,
+        environmentTest: envTest,
       },
     })
   } catch (err) {
     return NextResponse.json(
-      { ok: false, error: `Failed to connect: ${err instanceof Error ? err.message : String(err)}` },
+      { ok: false, error: `Failed to register: ${err instanceof Error ? err.message : String(err)}` },
       { status: 500 }
     )
   }
