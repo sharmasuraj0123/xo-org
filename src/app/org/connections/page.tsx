@@ -6,7 +6,6 @@ import { StripeConnector } from "@/components/xo/stripe-connector"
 import { VercelConnector } from "@/components/xo/vercel-connector"
 import { RcloneConnector } from "@/components/xo/rclone-connector"
 import { McpConnector } from "@/components/xo/mcp-connector"
-import { OpenClawConnector } from "@/components/xo/openclaw-connector"
 
 export default function OrgConnectionsPage() {
   return (
@@ -23,7 +22,6 @@ export default function OrgConnectionsPage() {
           </div>
 
           <div className="grid gap-4 @xl/main:grid-cols-2">
-            <OpenClawConnector />
             <GitHubConnector />
             <GmailConnector />
             <SlackConnector />
