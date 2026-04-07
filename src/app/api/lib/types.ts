@@ -475,6 +475,56 @@ export interface RcloneToolDefinition {
   params: Record<string, { type: string; required: boolean; description: string }>
 }
 
+// ─── MCP Types ─────────────────────────────────────────────
+
+export type McpConnectionStatus = "connected" | "disconnected" | "error"
+export type McpTransport = "http" | "stdio"
+
+export interface McpToolDefinition {
+  name: string
+  description: string
+  inputSchema: {
+    type: "object"
+    properties?: Record<string, unknown>
+    required?: string[]
+  }
+}
+
+export interface McpServerConfig {
+  id: string
+  name: string
+  transport: McpTransport
+  /** HTTP transport: server URL */
+  url?: string
+  /** HTTP transport: optional bearer token */
+  apiKey?: string
+  /** Stdio transport: command to spawn */
+  command?: string
+  /** Stdio transport: command arguments */
+  args?: string[]
+}
+
+export interface McpConnection {
+  id: string
+  config: McpServerConfig
+  serverName: string
+  serverVersion: string
+  protocolVersion: string
+  tools: McpToolDefinition[]
+  status: McpConnectionStatus
+  error?: string
+  connectedAt: number
+  updatedAt: number
+}
+
+export interface McpToolResult {
+  tool: string
+  serverId: string
+  ok: boolean
+  data?: unknown
+  error?: string
+}
+
 // ─── API Response Types ──────────────────────────────────────
 export interface ApiResponse<T = unknown> {
   ok: boolean

@@ -5,6 +5,7 @@ import { SlackConnector } from "@/components/xo/slack-connector"
 import { StripeConnector } from "@/components/xo/stripe-connector"
 import { VercelConnector } from "@/components/xo/vercel-connector"
 import { RcloneConnector } from "@/components/xo/rclone-connector"
+import { McpConnector } from "@/components/xo/mcp-connector"
 
 export default function OrgConnectionsPage() {
   return (
@@ -27,6 +28,7 @@ export default function OrgConnectionsPage() {
             <StripeConnector />
             <VercelConnector />
             <RcloneConnector />
+            <McpConnector />
           </div>
         </div>
       </div>
