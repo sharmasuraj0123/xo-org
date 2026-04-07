@@ -9,7 +9,6 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Separator } from "@/components/ui/separator"
-import { Badge } from "@/components/ui/badge"
 import {
   Card,
   CardContent,
@@ -28,8 +27,6 @@ import {
 import {
   ArrowLeftIcon,
   BotIcon,
-  ShieldIcon,
-  HashIcon,
   ZapIcon,
   LoaderIcon,
   CheckCircleIcon,
@@ -37,17 +34,6 @@ import {
   AlertTriangleIcon,
   HeartPulseIcon,
 } from "lucide-react"
-
-const availableChannels = [
-  "general",
-  "engineering",
-  "design",
-  "product",
-  "support",
-  "sales",
-  "marketing",
-  "random",
-]
 
 interface EnvCheck {
   code: string
@@ -85,12 +71,6 @@ export default function ConnectAgentPage() {
   const [heartbeatEnabled, setHeartbeatEnabled] = useState(false)
   const [heartbeatInterval, setHeartbeatInterval] = useState("300")
 
-  // Role & Permissions
-  const [role, setRole] = useState("Engineering")
-  const [permission, setPermission] = useState("member")
-  const [modelProvider, setModelProvider] = useState("anthropic")
-  const [model, setModel] = useState("claude-sonnet-4")
-  const [selectedChannels, setSelectedChannels] = useState<string[]>(["general"])
 
   // Instructions
   const [instructions, setInstructions] = useState("")
@@ -104,12 +84,6 @@ export default function ConnectAgentPage() {
     if (!agentId || agentId === agentName.toLowerCase().replace(/\s+/g, "-")) {
       setAgentId(value.toLowerCase().replace(/\s+/g, "-"))
     }
-  }
-
-  const toggleChannel = (channel: string) => {
-    setSelectedChannels((prev) =>
-      prev.includes(channel) ? prev.filter((c) => c !== channel) : [...prev, channel]
-    )
   }
 
   // ─── Test Environment ─────────────────────────────────────
@@ -166,11 +140,6 @@ export default function ConnectAgentPage() {
           name: agentName.trim(),
           description,
           systemInstructions: instructions,
-          role,
-          permission,
-          model,
-          modelProvider,
-          channels: selectedChannels,
           adapterType,
           gatewayUrl: gatewayUrl.trim(),
           gatewayToken: gatewayToken.trim(),
@@ -217,9 +186,7 @@ export default function ConnectAgentPage() {
             </div>
           </div>
 
-          <div className="grid gap-6 @3xl/main:grid-cols-2">
-            {/* ─── Left Column: Identity + Adapter ─── */}
-            <div className="flex flex-col gap-6">
+          <div className="grid gap-6">
               {/* Identity */}
               <Card>
                 <CardHeader>
@@ -378,106 +345,6 @@ export default function ConnectAgentPage() {
                   )}
                 </CardContent>
               </Card>
-            </div>
-
-            {/* ─── Right Column: Role + Channels ─── */}
-            <div className="flex flex-col gap-6">
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center gap-2">
-                    <ShieldIcon className="size-4 text-muted-foreground" />
-                    <CardTitle>Role &amp; Permissions</CardTitle>
-                  </div>
-                  <CardDescription>
-                    Define the agent&apos;s role, model, and what it can access.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="grid gap-4">
-                  <div className="grid gap-2">
-                    <Label>Role</Label>
-                    <Select value={role} onValueChange={(v) => v && setRole(v)}>
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Research">Research</SelectItem>
-                        <SelectItem value="Engineering">Engineering</SelectItem>
-                        <SelectItem value="DevOps">DevOps</SelectItem>
-                        <SelectItem value="Design">Design</SelectItem>
-                        <SelectItem value="Product">Product</SelectItem>
-                        <SelectItem value="Analytics">Analytics</SelectItem>
-                        <SelectItem value="Security">Security</SelectItem>
-                        <SelectItem value="Support">Support</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label>Permission</Label>
-                    <Select value={permission} onValueChange={(v) => v && setPermission(v)}>
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="admin">Admin</SelectItem>
-                        <SelectItem value="mod">Mod</SelectItem>
-                        <SelectItem value="member">Member</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label>Model Provider</Label>
-                    <Select value={modelProvider} onValueChange={(v) => v && setModelProvider(v)}>
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="anthropic">Anthropic</SelectItem>
-                        <SelectItem value="openai">OpenAI</SelectItem>
-                        <SelectItem value="google">Google</SelectItem>
-                        <SelectItem value="custom">Custom</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label>Model</Label>
-                    <Select value={model} onValueChange={(v) => v && setModel(v)}>
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="claude-opus-4">Claude Opus</SelectItem>
-                        <SelectItem value="claude-sonnet-4">Claude Sonnet</SelectItem>
-                        <SelectItem value="claude-haiku">Claude Haiku</SelectItem>
-                        <SelectItem value="gpt-4o">GPT-4o</SelectItem>
-                        <SelectItem value="gemini-pro">Gemini Pro</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <Separator />
-
-                  <div className="flex items-center gap-2">
-                    <HashIcon className="size-4 text-muted-foreground" />
-                    <span className="text-sm font-medium">Channel Access</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Select which channels this agent can read and respond in.
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {availableChannels.map((channel) => (
-                      <Badge
-                        key={channel}
-                        variant={selectedChannels.includes(channel) ? "default" : "outline"}
-                        className="cursor-pointer select-none hover:bg-primary hover:text-primary-foreground"
-                        onClick={() => toggleChannel(channel)}
-                      >
-                        #{channel}
-                      </Badge>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
           </div>
 
           {/* Instructions */}
