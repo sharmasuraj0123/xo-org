@@ -4,18 +4,9 @@ import { GmailConnector } from "@/components/xo/gmail-connector"
 import { SlackConnector } from "@/components/xo/slack-connector"
 import { StripeConnector } from "@/components/xo/stripe-connector"
 import { VercelConnector } from "@/components/xo/vercel-connector"
-import { AGENTS } from "@/lib/mock-data"
-import { notFound } from "next/navigation"
+import { RcloneConnector } from "@/components/xo/rclone-connector"
 
-export default async function AgentDetailConnectionsPage({
-  params,
-}: {
-  params: Promise<{ id: string }>
-}) {
-  const { id } = await params
-  const agent = AGENTS.find((a) => a.id === id)
-  if (!agent) notFound()
-
+export default function OrgConnectionsPage() {
   return (
     <>
       <SiteHeader title="Connections" />
@@ -24,7 +15,8 @@ export default async function AgentDetailConnectionsPage({
           <div className="flex flex-col gap-1">
             <h2 className="text-lg font-semibold">Integrations</h2>
             <p className="text-sm text-muted-foreground">
-              External services available to {agent.name}.
+              Connect external services to give your agents access to repos,
+              communication channels, and project tools.
             </p>
           </div>
 
@@ -34,6 +26,7 @@ export default async function AgentDetailConnectionsPage({
             <SlackConnector />
             <StripeConnector />
             <VercelConnector />
+            <RcloneConnector />
           </div>
         </div>
       </div>

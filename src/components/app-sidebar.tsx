@@ -47,6 +47,7 @@ const orgNav = [
   { title: "Dashboard", url: "/org", icon: <LayoutDashboardIcon /> },
   { title: "Agents", url: "/org/agents", icon: <UsersIcon /> },
   { title: "Objectives", url: "/org/objectives", icon: <TargetIcon /> },
+  { title: "Connections", url: "/org/connections", icon: <LinkIcon /> },
 ]
 
 const agentSoloNav = [
