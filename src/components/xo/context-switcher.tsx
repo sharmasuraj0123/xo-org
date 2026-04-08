@@ -1,8 +1,9 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
-import { AGENTS, type AgentRole } from "@/lib/mock-data"
+import { type Agent, type AgentRole } from "@/lib/mock-data"
 import { getMode, getAgentId } from "@/lib/mode"
 import {
   DropdownMenu,
@@ -39,14 +40,26 @@ const STATUS_DOT: Record<string, string> = {
   offline: "bg-muted-foreground/30",
 }
 
+function useAgents() {
+  const [agents, setAgents] = useState<Agent[]>([])
+  useEffect(() => {
+    fetch("/api/agents")
+      .then((r) => r.json())
+      .then((d) => { if (d.ok) setAgents(d.data) })
+      .catch(() => {})
+  }, [])
+  return agents
+}
+
 export function ContextSwitcher() {
   const pathname = usePathname()
   const router = useRouter()
   const xoMode = getMode()
+  const agents = useAgents()
 
   // In agent-only mode, show fixed agent identity without dropdown
   if (xoMode === "agent") {
-    const fixedAgent = AGENTS.find((a) => a.id === getAgentId())
+    const fixedAgent = agents.find((a) => a.id === getAgentId())
     if (!fixedAgent) {
       return (
         <SidebarMenu>
@@ -90,7 +103,7 @@ export function ContextSwitcher() {
   const isAgentMode = pathname.startsWith("/agent")
   const currentAgentId = isAgentMode ? pathname.split("/")[2] : null
   const currentAgent = currentAgentId
-    ? AGENTS.find((a) => a.id === currentAgentId)
+    ? agents.find((a) => a.id === currentAgentId)
     : null
 
   function handleSelectOrg() {
@@ -167,7 +180,7 @@ export function ContextSwitcher() {
                 <div className="flex flex-col leading-tight">
                   <span className="text-sm font-medium">XO Org</span>
                   <span className="text-xs text-muted-foreground">
-                    {AGENTS.length} agents
+                    {agents.length} agents
                   </span>
                 </div>
               </DropdownMenuItem>
@@ -177,7 +190,7 @@ export function ContextSwitcher() {
               <DropdownMenuLabel className="text-xs text-muted-foreground">
                 Agents
               </DropdownMenuLabel>
-            {AGENTS.map((agent) => {
+            {agents.map((agent) => {
               const role = ROLE_STYLES[agent.role]
               const isActive = currentAgentId === agent.id
 
