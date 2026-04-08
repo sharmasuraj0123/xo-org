@@ -42,7 +42,6 @@ async function fetchSessions(gatewayUrl: string, gatewayToken: string): Promise<
     method: "POST",
     headers: {
       "x-openclaw-token": gatewayToken,
-      "Authorization": `Bearer ${gatewayToken}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ tool: "sessions_list", args: {} }),

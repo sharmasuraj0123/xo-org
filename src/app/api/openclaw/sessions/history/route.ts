@@ -42,7 +42,6 @@ export async function GET(request: NextRequest) {
       method: "POST",
       headers: {
         "x-openclaw-token": GATEWAY_TOKEN,
-        "Authorization": `Bearer ${GATEWAY_TOKEN}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({

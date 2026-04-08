@@ -27,7 +27,6 @@ async function gatewayInvoke(
     method: "POST",
     headers: {
       "x-openclaw-token": gatewayToken,
-      Authorization: `Bearer ${gatewayToken}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ tool, args }),
