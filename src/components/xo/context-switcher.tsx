@@ -42,12 +42,14 @@ const STATUS_DOT: Record<string, string> = {
 
 function useAgents() {
   const [agents, setAgents] = useState<Agent[]>([])
+  const pathname = usePathname()
   useEffect(() => {
+    // Refetch on every route change so new agents appear immediately
     fetch("/api/agents")
       .then((r) => r.json())
       .then((d) => { if (d.ok) setAgents(d.data) })
       .catch(() => {})
-  }, [])
+  }, [pathname])
   return agents
 }
 
