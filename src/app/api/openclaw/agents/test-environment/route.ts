@@ -25,7 +25,7 @@ export async function POST(req: Request) {
   }
 
   const url = gatewayUrl || process.env.OPENCLAW_GATEWAY_URL || "ws://127.0.0.1:18789"
-  const token = gatewayToken || process.env.OPENCLAW_GATEWAY_TOKEN || "xo"
+  const token = gatewayToken || process.env.OPENCLAW_GATEWAY_TOKEN || ""
 
   const config: GatewayConfig = {
     url,

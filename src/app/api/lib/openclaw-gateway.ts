@@ -298,8 +298,13 @@ export class GatewayWsClient {
       if (this.config.authToken) {
         headers["x-openclaw-token"] = this.config.authToken
       }
+      // Coder workspace proxy auth: pass session token via cookie or header
+      const coderToken = process.env.CODER_SESSION_TOKEN
+      if (coderToken) {
+        headers["Cookie"] = `coder_session_token=${coderToken}`
+      }
 
-      const ws = new WebSocket(url, { headers, maxPayload: MAX_PAYLOAD })
+      const ws = new WebSocket(url, { headers, maxPayload: MAX_PAYLOAD, followRedirects: true })
       this.ws = ws
 
       const timeout = setTimeout(() => {
