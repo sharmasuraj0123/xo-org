@@ -219,6 +219,7 @@ export function removeAgent(id: string): boolean {
   }
 
   agents.delete(id)
+  saveBridgeAgents()
   return true
 }
 

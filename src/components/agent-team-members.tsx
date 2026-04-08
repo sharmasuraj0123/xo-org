@@ -19,6 +19,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
+import { Button } from "@/components/ui/button"
+import { TrashIcon } from "lucide-react"
 import { type AgentRole } from "@/lib/mock-data"
 
 const ROLE_COLORS: Record<AgentRole, { bg: string; text: string }> = {
@@ -54,12 +56,20 @@ interface AgentEntry {
 export function AgentTeamMembers() {
   const [agents, setAgents] = useState<AgentEntry[]>([])
 
-  useEffect(() => {
+  const loadAgents = () => {
     fetch("/api/agents")
       .then((r) => r.json())
       .then((d) => { if (d.ok) setAgents(d.data) })
       .catch(() => {})
-  }, [])
+  }
+
+  useEffect(() => { loadAgents() }, [])
+
+  const handleDelete = async (id: string) => {
+    const res = await fetch(`/api/agents?id=${id}`, { method: "DELETE" })
+    const data = await res.json()
+    if (data.ok) loadAgents()
+  }
 
   return (
     <Card>
@@ -109,6 +119,14 @@ export function AgentTeamMembers() {
                     </SelectGroup>
                   </SelectContent>
                 </Select>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 text-muted-foreground hover:text-destructive"
+                  onClick={() => handleDelete(agent.id)}
+                >
+                  <TrashIcon className="size-3.5" />
+                </Button>
               </div>
             </div>
           )

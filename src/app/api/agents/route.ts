@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
-import { registerAgent, listAgents } from "../lib/bridge"
+import { registerAgent, listAgents, removeAgent } from "../lib/bridge"
+import { removeAgent as removeOpenClawAgent } from "../lib/openclaw-store"
 import { generateToken } from "../lib/auth"
 
 // GET /api/agents — list all agents
@@ -38,4 +39,23 @@ export async function POST(req: Request) {
     },
     { status: 201 }
   )
+}
+
+// DELETE /api/agents — remove an agent
+export async function DELETE(req: Request) {
+  const { searchParams } = new URL(req.url)
+  const id = searchParams.get("id")
+
+  if (!id) {
+    return NextResponse.json({ ok: false, error: "id query param required" }, { status: 400 })
+  }
+
+  const removed = removeAgent(id)
+  removeOpenClawAgent(id) // also clean openclaw store if exists
+
+  if (!removed) {
+    return NextResponse.json({ ok: false, error: "Agent not found" }, { status: 404 })
+  }
+
+  return NextResponse.json({ ok: true })
 }
