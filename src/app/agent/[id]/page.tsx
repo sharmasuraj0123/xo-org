@@ -4,6 +4,7 @@ import { AgentStorage } from "@/components/agent-storage"
 import { AgentConnections } from "@/components/agent-connections"
 import { SiteHeader } from "@/components/site-header"
 import { AGENTS } from "@/lib/mock-data"
+import { getAgent } from "@/app/api/lib/bridge"
 import { notFound } from "next/navigation"
 
 export default async function AgentDashboardPage({
@@ -12,7 +13,7 @@ export default async function AgentDashboardPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
-  const agent = AGENTS.find((a) => a.id === id)
+  const agent = AGENTS.find((a) => a.id === id) ?? getAgent(id)
   if (!agent) notFound()
 
   return (

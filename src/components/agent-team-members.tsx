@@ -1,5 +1,6 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
 import {
   Card,
@@ -18,7 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
-import { AGENTS, type AgentRole } from "@/lib/mock-data"
+import { type AgentRole } from "@/lib/mock-data"
 
 const ROLE_COLORS: Record<AgentRole, { bg: string; text: string }> = {
   Research: { bg: "bg-blue-500/20", text: "text-blue-400" },
@@ -42,7 +43,24 @@ const ALL_ROLES: AgentRole[] = [
   "Support",
 ]
 
+interface AgentEntry {
+  id: string
+  name: string
+  role: AgentRole
+  model: string
+  status: string
+}
+
 export function AgentTeamMembers() {
+  const [agents, setAgents] = useState<AgentEntry[]>([])
+
+  useEffect(() => {
+    fetch("/api/agents")
+      .then((r) => r.json())
+      .then((d) => { if (d.ok) setAgents(d.data) })
+      .catch(() => {})
+  }, [])
+
   return (
     <Card>
       <CardHeader>
@@ -52,7 +70,7 @@ export function AgentTeamMembers() {
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-0">
-        {AGENTS.map((agent, i) => {
+        {agents.map((agent, i) => {
           const colors = ROLE_COLORS[agent.role]
           return (
             <div key={agent.id}>

@@ -4,6 +4,7 @@ import { OBJECTIVES } from "@/lib/mock-data"
 import { objectivesToOKRRows } from "@/lib/mock-data"
 import { notFound } from "next/navigation"
 import { AGENTS } from "@/lib/mock-data"
+import { getAgent } from "@/app/api/lib/bridge"
 
 export default async function AgentDetailObjectivesPage({
   params,
@@ -11,7 +12,7 @@ export default async function AgentDetailObjectivesPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
-  const agent = AGENTS.find((a) => a.id === id)
+  const agent = AGENTS.find((a) => a.id === id) ?? getAgent(id)
   if (!agent) notFound()
 
   const agentObjectives = OBJECTIVES.filter((obj) => obj.aiOwner === id)

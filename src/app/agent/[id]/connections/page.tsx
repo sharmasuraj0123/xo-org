@@ -7,6 +7,7 @@ import { VercelConnector } from "@/components/xo/vercel-connector"
 import { RcloneConnector } from "@/components/xo/rclone-connector"
 import { McpConnector } from "@/components/xo/mcp-connector"
 import { AGENTS } from "@/lib/mock-data"
+import { getAgent } from "@/app/api/lib/bridge"
 import { notFound } from "next/navigation"
 
 export default async function AgentDetailConnectionsPage({
@@ -15,7 +16,7 @@ export default async function AgentDetailConnectionsPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
-  const agent = AGENTS.find((a) => a.id === id)
+  const agent = AGENTS.find((a) => a.id === id) ?? getAgent(id)
   if (!agent) notFound()
 
   return (

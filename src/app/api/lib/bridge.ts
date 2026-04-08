@@ -96,6 +96,29 @@ for (const seed of seedTasks) {
   tasks.set(task.id, task)
 }
 
+// ─── Seed mock agents ───────────────────────────────────────
+import { AGENTS as MOCK_AGENTS } from "@/lib/mock-data"
+
+for (const mock of MOCK_AGENTS) {
+  agents.set(mock.id, {
+    id: mock.id,
+    name: mock.name,
+    role: mock.role,
+    status: mock.status,
+    model: mock.model,
+    lastActive: mock.lastActive,
+    currentTask: mock.currentTask,
+    channels: mock.channels,
+    tasksCompleted: mock.tasksCompleted,
+    capacity: 3,
+    activeTasks: mock.currentTask ? 1 : 0,
+    permission: "member",
+    cursor: 0,
+    connectedAt: Date.now(),
+    lastPulse: Date.now(),
+  })
+}
+
 // ─── Agent Operations ────────────────────────────────────────
 
 export function registerAgent(manifest: Partial<AgentManifest>): AgentManifest {

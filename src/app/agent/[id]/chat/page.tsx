@@ -1,5 +1,6 @@
 import { SiteHeader } from "@/components/site-header"
 import { AGENTS } from "@/lib/mock-data"
+import { getAgent } from "@/app/api/lib/bridge"
 import { notFound } from "next/navigation"
 import { AgentChat } from "./agent-chat"
 
@@ -12,7 +13,7 @@ export default async function ChatPage({
 }) {
   const { id } = await params
   const { session } = await searchParams
-  const agent = AGENTS.find((a) => a.id === id)
+  const agent = AGENTS.find((a) => a.id === id) ?? getAgent(id)
   if (!agent) notFound()
 
   return (
