@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from "next/server"
  *   limit       - optional: number of messages to return (default 100)
  */
 
-const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || "http://127.0.0.1:18789"
+const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || ""
 const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || ""
 
 export type GatewayMessage = {

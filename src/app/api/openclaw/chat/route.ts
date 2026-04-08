@@ -25,19 +25,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "agentId and message required" }, { status: 400 })
   }
 
-  // Look up agent config — check openclaw store first, then env defaults
+  // Look up agent config — each agent has its own gateway URL and token
   const agent = getAgent(agentId)
-  const rawUrl = agent?.gatewayUrl || process.env.OPENCLAW_GATEWAY_URL || "http://127.0.0.1:18789"
-  // Convert ws:// to http:// for the REST API
-  const gatewayUrl = rawUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:")
-  const gatewayToken = agent?.gatewayToken || process.env.OPENCLAW_GATEWAY_TOKEN || ""
-
-  if (!gatewayToken) {
+  if (!agent?.gatewayUrl || !agent?.gatewayToken) {
     return NextResponse.json(
-      { ok: false, error: "No gateway token configured. Re-connect the agent via Connect Agent page." },
+      { ok: false, error: "Agent has no gateway config. Connect it via the Connect Agent page." },
       { status: 400 }
     )
   }
+  // Convert ws:// to http:// for the REST API
+  const gatewayUrl = agent.gatewayUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:")
+  const gatewayToken = agent.gatewayToken
   const key = sessionKey || `agent:${agentId}:main`
 
   try {

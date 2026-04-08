@@ -51,7 +51,7 @@ export default function ConnectAgentPage() {
 
   // Adapter
   const [adapterType, setAdapterType] = useState("openclaw_gateway")
-  const [gatewayUrl, setGatewayUrl] = useState("ws://127.0.0.1:18789")
+  const [gatewayUrl, setGatewayUrl] = useState("")
   const [gatewayToken, setGatewayToken] = useState("")
   const [sessionKeyStrategy] = useState("issue")
   const [payloadTemplate, setPayloadTemplate] = useState(
