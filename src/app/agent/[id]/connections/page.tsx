@@ -4,6 +4,8 @@ import { GmailConnector } from "@/components/xo/gmail-connector"
 import { SlackConnector } from "@/components/xo/slack-connector"
 import { StripeConnector } from "@/components/xo/stripe-connector"
 import { VercelConnector } from "@/components/xo/vercel-connector"
+import { RcloneConnector } from "@/components/xo/rclone-connector"
+import { McpConnector } from "@/components/xo/mcp-connector"
 import { AGENTS } from "@/lib/mock-data"
 import { notFound } from "next/navigation"
 
@@ -34,6 +36,8 @@ export default async function AgentDetailConnectionsPage({
             <SlackConnector />
             <StripeConnector />
             <VercelConnector />
+            <RcloneConnector />
+            <McpConnector />
           </div>
         </div>
       </div>

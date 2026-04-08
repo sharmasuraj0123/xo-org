@@ -1,7 +1,7 @@
 // @ts-nocheck
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useCallback } from "react"
 import {
   ThreadPrimitive,
   ComposerPrimitive,
@@ -766,15 +766,13 @@ export function AgentChat({ agent, sessionId }: { agent: Agent; sessionId?: stri
   // Use provided sessionId or generate a default one for the agent
   const activeSessionId = sessionId || `default-${agent.id}`
 
-  // Load previous messages from localStorage
-  const restoredMessages = useRef<StoredMessage[]>([])
-  const initialized = useRef(false)
+  // Load previous messages from localStorage after hydration
+  const [restoredMessages, setRestoredMessages] = useState<StoredMessage[]>([])
 
-  if (!initialized.current) {
-    restoredMessages.current = getSessionMessages(activeSessionId)
+  useEffect(() => {
+    setRestoredMessages(getSessionMessages(activeSessionId))
     ensureSessionMeta(activeSessionId)
-    initialized.current = true
-  }
+  }, [activeSessionId])
 
   const runtime = useLocalRuntime(createAgentAdapter(agent, activeSessionId))
 
@@ -786,7 +784,7 @@ export function AgentChat({ agent, sessionId }: { agent: Agent; sessionId?: stri
             <AgentThread
               agent={agent}
               sessionId={activeSessionId}
-              restoredMessages={restoredMessages.current}
+              restoredMessages={restoredMessages}
             />
           </AssistantRuntimeProvider>
         </ResizablePanel>
