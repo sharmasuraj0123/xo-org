@@ -41,6 +41,7 @@ export async function GET(request: NextRequest) {
     const res = await fetch(`${GATEWAY_URL}/tools/invoke`, {
       method: "POST",
       headers: {
+        "Authorization": `Bearer ${GATEWAY_TOKEN}`,
         "x-openclaw-token": GATEWAY_TOKEN,
         "Content-Type": "application/json",
       },

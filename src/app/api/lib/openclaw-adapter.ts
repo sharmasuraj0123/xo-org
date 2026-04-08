@@ -26,6 +26,7 @@ async function gatewayInvoke(
   const res = await fetch(`${gatewayUrl}/tools/invoke`, {
     method: "POST",
     headers: {
+      "Authorization": `Bearer ${gatewayToken}`,
       "x-openclaw-token": gatewayToken,
       "Content-Type": "application/json",
     },
