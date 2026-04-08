@@ -1,11 +1,17 @@
 import { NextResponse } from "next/server"
 import { getAgent } from "../../lib/openclaw-store"
-import { invokeAgent, getSessionHistory } from "../../lib/openclaw-adapter"
+import { connectToGateway, type GatewayConfig } from "../../lib/openclaw-gateway"
+import { getSessionHistory } from "../../lib/openclaw-adapter"
 
 /**
  * POST /api/openclaw/chat
  *
- * Send a message to an agent via the OpenClaw Gateway and poll for response.
+ * Send a message to an agent via the OpenClaw Gateway WebSocket
+ * and poll sessions_history for the response.
+ *
+ * The gateway's HTTP /tools/invoke only supports read tools (sessions_list,
+ * sessions_history). Sending messages requires WebSocket — matching how
+ * the OpenClaw Control UI works.
  */
 export async function POST(req: Request) {
   let body: Record<string, unknown>
@@ -25,7 +31,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "agentId and message required" }, { status: 400 })
   }
 
-  // Look up agent config — each agent has its own gateway URL and token
+  // Look up agent config
   const agent = getAgent(agentId)
   if (!agent?.gatewayUrl || !agent?.gatewayToken) {
     return NextResponse.json(
@@ -33,16 +39,37 @@ export async function POST(req: Request) {
       { status: 400 }
     )
   }
-  // Convert ws:// to http:// for the REST API
-  const gatewayUrl = agent.gatewayUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:")
-  const gatewayToken = agent.gatewayToken
+
   const key = sessionKey || `agent:${agentId}:main`
+  const httpUrl = agent.gatewayUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:")
 
   try {
-    // Send message through gateway
-    await invokeAgent(gatewayUrl, gatewayToken, key, message)
+    // Connect via WebSocket and send the message
+    const config: GatewayConfig = {
+      url: agent.gatewayUrl,
+      authToken: agent.gatewayToken,
+      disableDeviceAuth: true,
+    }
 
-    // Poll for response — gateway processes async, so we wait briefly then check history
+    const client = await connectToGateway(config)
+
+    // Send user message via WebSocket
+    const sendRes = await client.sendRequest("sessions.send", {
+      sessionKey: key,
+      message: { role: "user", content: [{ type: "text", text: message }] },
+    }, 15000)
+
+    client.close()
+
+    if (!sendRes.ok) {
+      // If sessions.send doesn't work, try alternative methods
+      return NextResponse.json(
+        { ok: false, error: `Gateway rejected message: ${sendRes.error?.message ?? "unknown"}` },
+        { status: 502 }
+      )
+    }
+
+    // Poll for assistant response via HTTP sessions_history
     let responseText = ""
     const maxAttempts = 15
     const pollInterval = 2000
@@ -51,21 +78,29 @@ export async function POST(req: Request) {
       await new Promise((r) => setTimeout(r, pollInterval))
 
       try {
-        const history = (await getSessionHistory(key, 5, gatewayUrl, gatewayToken)) as {
+        const history = (await getSessionHistory(key, 10, httpUrl, agent.gatewayToken)) as {
           details?: {
-            messages?: Array<{ role: string; content: string; timestamp?: number }>
+            messages?: Array<{
+              role: string
+              content: Array<{ type: string; text?: string }>
+              timestamp?: number
+            }>
           }
         }
 
         const messages = history?.details?.messages ?? []
-        // Find the latest assistant message after our user message
         const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant")
         if (lastAssistant?.content) {
-          responseText = lastAssistant.content
-          break
+          const textParts = lastAssistant.content
+            .filter((p) => p.type === "text" && p.text)
+            .map((p) => p.text)
+          if (textParts.length > 0) {
+            responseText = textParts.join("\n")
+            break
+          }
         }
       } catch {
-        // Gateway might not have processed yet, continue polling
+        // Gateway might not have processed yet
       }
     }
 
