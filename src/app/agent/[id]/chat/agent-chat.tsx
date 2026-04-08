@@ -96,17 +96,6 @@ const STATUS_BADGE: Record<Agent["status"], string> = {
 // --- Chat adapter with localStorage persistence ---
 
 function createAgentAdapter(agent: Agent, sessionId: string): ChatModelAdapter {
-  const roleResponses: Record<string, (msg: string) => string> = {
-    Research: (msg) => `I've looked into "${msg}" — let me pull together the relevant findings and data points for you.`,
-    Engineering: (msg) => `On it. I'll start working on "${msg}" and push a branch when ready for review.`,
-    DevOps: (msg) => `Checking infrastructure for "${msg}". I'll run diagnostics and report back with the status.`,
-    Design: (msg) => `Great prompt. I'll explore some visual directions for "${msg}" and share mockups shortly.`,
-    Product: (msg) => `Interesting. Let me analyze the user impact of "${msg}" and draft a brief proposal.`,
-    Analytics: (msg) => `I'll crunch the numbers on "${msg}" and prepare a data summary for you.`,
-    Security: (msg) => `Running a security assessment on "${msg}". I'll flag any vulnerabilities I find.`,
-    Support: (msg) => `I'll look into "${msg}" and check our knowledge base for relevant solutions.`,
-  }
-
   return {
     async *run({ messages }) {
       const lastUserMessage =
@@ -124,10 +113,27 @@ function createAgentAdapter(agent: Agent, sessionId: string): ChatModelAdapter {
         timestamp: Date.now(),
       })
 
-      const responseFn = roleResponses[agent.role] ?? roleResponses.Research!
-      await new Promise((r) => setTimeout(r, 400 + Math.random() * 600))
-
-      const responseText = responseFn(userText)
+      // Send through OpenClaw Gateway
+      let responseText = ""
+      try {
+        const res = await fetch("/api/openclaw/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            agentId: agent.id,
+            sessionKey: `agent:${agent.id}:${sessionId}`,
+            message: userText,
+          }),
+        })
+        const data = await res.json()
+        if (data.ok && data.data?.response) {
+          responseText = data.data.response
+        } else {
+          responseText = data.error ?? "Failed to get response from agent."
+        }
+      } catch {
+        responseText = "Unable to reach the gateway. Check your connection."
+      }
 
       // Save assistant message to localStorage
       appendSessionMessage(sessionId, {
