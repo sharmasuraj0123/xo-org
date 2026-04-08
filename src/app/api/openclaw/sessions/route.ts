@@ -1,17 +1,15 @@
 import { NextResponse } from "next/server"
+import { listAgents } from "../../lib/openclaw-store"
 
 /**
- * Fetches the live session list from the OpenClaw Gateway via HTTP Tools Invoke API.
+ * Fetches the live session list from all connected OpenClaw Gateways.
  *
- * Uses POST /tools/invoke instead of CLI exec — ~35ms vs ~5400ms.
- *
- * The Gateway exposes a direct HTTP endpoint at /tools/invoke that accepts
- * tool calls with Bearer auth. This avoids forking a new Node.js process for
- * every request (the CLI exec approach had ~5s startup overhead each time).
+ * Queries each connected agent's gateway URL for sessions,
+ * plus the default env gateway as fallback.
  */
 
-const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || "http://127.0.0.1:18789"
-const GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || ""
+const DEFAULT_GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || ""
+const DEFAULT_GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || ""
 
 export type GatewaySession = {
   key: string
@@ -36,40 +34,64 @@ export type GatewaySession = {
   deliveryContext?: Record<string, string>
 }
 
+async function fetchSessions(gatewayUrl: string, gatewayToken: string): Promise<GatewaySession[]> {
+  // Convert ws:// to http:// for the HTTP API
+  const httpUrl = gatewayUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:")
+
+  const res = await fetch(`${httpUrl}/tools/invoke`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${gatewayToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ tool: "sessions_list", args: {} }),
+    signal: AbortSignal.timeout(5000),
+  })
+
+  if (!res.ok) return []
+
+  const body = await res.json() as {
+    ok: boolean
+    result?: { details?: { sessions: GatewaySession[]; count: number } }
+  }
+
+  return body.ok ? (body.result?.details?.sessions ?? []) : []
+}
+
 export async function GET() {
   try {
-    const res = await fetch(`${GATEWAY_URL}/tools/invoke`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${GATEWAY_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ tool: "sessions_list", args: {} }),
-      // Short timeout — Gateway is local, should respond in <100ms
-      signal: AbortSignal.timeout(5000),
-    })
+    // Collect unique gateway URLs from connected agents + default
+    const gateways = new Map<string, string>()
 
-    if (!res.ok) {
-      return NextResponse.json(
-        { error: `Gateway returned ${res.status}` },
-        { status: 502 }
-      )
+    if (DEFAULT_GATEWAY_URL) {
+      gateways.set(DEFAULT_GATEWAY_URL, DEFAULT_GATEWAY_TOKEN)
     }
 
-    const body = await res.json() as {
-      ok: boolean
-      result?: { details?: { sessions: GatewaySession[]; count: number } }
-      error?: string
+    for (const agent of listAgents()) {
+      if (agent.gatewayUrl && !gateways.has(agent.gatewayUrl)) {
+        gateways.set(agent.gatewayUrl, agent.gatewayToken)
+      }
     }
 
-    if (!body.ok) {
-      return NextResponse.json({ error: body.error ?? "Gateway error" }, { status: 502 })
+    if (gateways.size === 0) {
+      return NextResponse.json({ sessions: [], count: 0 })
     }
 
-    const details = body.result?.details
+    // Query all gateways in parallel
+    const results = await Promise.allSettled(
+      Array.from(gateways.entries()).map(([url, token]) => fetchSessions(url, token))
+    )
+
+    const allSessions: GatewaySession[] = []
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        allSessions.push(...result.value)
+      }
+    }
+
     return NextResponse.json({
-      sessions: details?.sessions ?? [],
-      count: details?.count ?? 0,
+      sessions: allSessions,
+      count: allSessions.length,
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
