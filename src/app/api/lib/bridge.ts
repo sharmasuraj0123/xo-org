@@ -180,10 +180,21 @@ export function registerAgent(manifest: Partial<AgentManifest>): AgentManifest {
 }
 
 export function getAgent(id: string): AgentManifest | undefined {
+  if (!agents.has(id)) {
+    // Check disk for agents registered by other module instances
+    const diskAgents = loadBridgeAgents()
+    const fromDisk = diskAgents.get(id)
+    if (fromDisk) agents.set(id, fromDisk)
+  }
   return agents.get(id)
 }
 
 export function listAgents(): AgentManifest[] {
+  // Reload from disk to pick up agents registered by other module instances
+  const diskAgents = loadBridgeAgents()
+  for (const [id, agent] of diskAgents) {
+    if (!agents.has(id)) agents.set(id, agent)
+  }
   return Array.from(agents.values())
 }
 
