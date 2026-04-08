@@ -69,10 +69,34 @@ export interface OpenClawAgent {
   totalRuns: number
 }
 
-const agents = new Map<string, OpenClawAgent>()
+import fs from "node:fs"
+import path from "node:path"
+
+const STORE_PATH = path.join(process.cwd(), ".data", "openclaw-agents.json")
+
+function loadFromDisk(): Map<string, OpenClawAgent> {
+  try {
+    if (fs.existsSync(STORE_PATH)) {
+      const data = JSON.parse(fs.readFileSync(STORE_PATH, "utf-8")) as OpenClawAgent[]
+      return new Map(data.map((a) => [a.agentId, a]))
+    }
+  } catch { /* ignore corrupt file */ }
+  return new Map()
+}
+
+function saveToDisk() {
+  try {
+    const dir = path.dirname(STORE_PATH)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(STORE_PATH, JSON.stringify(Array.from(agents.values()), null, 2))
+  } catch { /* ignore write errors */ }
+}
+
+const agents = loadFromDisk()
 
 export function saveAgent(agent: OpenClawAgent): OpenClawAgent {
   agents.set(agent.agentId, agent)
+  saveToDisk()
   return agent
 }
 
@@ -95,11 +119,14 @@ export function updateAgent(
   const agent = agents.get(agentId)
   if (!agent) return undefined
   Object.assign(agent, update, { updatedAt: Date.now() })
+  saveToDisk()
   return agent
 }
 
 export function removeAgent(agentId: string): boolean {
-  return agents.delete(agentId)
+  const result = agents.delete(agentId)
+  if (result) saveToDisk()
+  return result
 }
 
 /**

@@ -6,6 +6,8 @@
  * append-only event log + cursor-based read semantics.
  */
 
+import fs from "node:fs"
+import path from "node:path"
 import type {
   AgentManifest,
   MessageEnvelope,
@@ -16,11 +18,32 @@ import type {
   TaskStatus,
 } from "./types"
 
+// ─── Persistence ────────────────────────────────────────────────
+const BRIDGE_AGENTS_PATH = path.join(process.cwd(), ".data", "bridge-agents.json")
+
+function loadBridgeAgents(): Map<string, AgentManifest> {
+  try {
+    if (fs.existsSync(BRIDGE_AGENTS_PATH)) {
+      const data = JSON.parse(fs.readFileSync(BRIDGE_AGENTS_PATH, "utf-8")) as AgentManifest[]
+      return new Map(data.map((a) => [a.id, a]))
+    }
+  } catch { /* ignore */ }
+  return new Map()
+}
+
+function saveBridgeAgents() {
+  try {
+    const dir = path.dirname(BRIDGE_AGENTS_PATH)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(BRIDGE_AGENTS_PATH, JSON.stringify(Array.from(agents.values()), null, 2))
+  } catch { /* ignore */ }
+}
+
 // ─── In-Memory Event Log ─────────────────────────────────────
 // Mirrors log.jsonl — single append-only array, all state derived
 
 const eventLog: MessageEnvelope[] = []
-const agents: Map<string, AgentManifest> = new Map()
+const agents: Map<string, AgentManifest> = loadBridgeAgents()
 const channels: Map<string, Channel> = new Map()
 const tasks: Map<string, Task> = new Map()
 
@@ -100,6 +123,7 @@ for (const seed of seedTasks) {
 import { AGENTS as MOCK_AGENTS } from "@/lib/mock-data"
 
 for (const mock of MOCK_AGENTS) {
+  if (agents.has(mock.id)) continue // don't overwrite persisted data
   agents.set(mock.id, {
     id: mock.id,
     name: mock.name,
@@ -142,6 +166,7 @@ export function registerAgent(manifest: Partial<AgentManifest>): AgentManifest {
   }
 
   agents.set(agent.id, agent)
+  saveBridgeAgents()
 
   // Join channels
   for (const ch of agent.channels) {
