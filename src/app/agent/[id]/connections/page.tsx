@@ -6,8 +6,7 @@ import { StripeConnector } from "@/components/xo/stripe-connector"
 import { VercelConnector } from "@/components/xo/vercel-connector"
 import { RcloneConnector } from "@/components/xo/rclone-connector"
 import { McpConnector } from "@/components/xo/mcp-connector"
-import { AGENTS } from "@/lib/mock-data"
-import { getAgent } from "@/app/api/lib/bridge"
+import { findAgent } from "@/lib/find-agent"
 import { notFound } from "next/navigation"
 
 export default async function AgentDetailConnectionsPage({
@@ -16,7 +15,7 @@ export default async function AgentDetailConnectionsPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = await params
-  const agent = AGENTS.find((a) => a.id === id) ?? getAgent(id)
+  const agent = findAgent(id)
   if (!agent) notFound()
 
   return (
