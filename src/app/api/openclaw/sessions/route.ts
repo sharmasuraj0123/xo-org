@@ -41,6 +41,7 @@ async function fetchSessions(gatewayUrl: string, gatewayToken: string): Promise<
   const res = await fetch(`${httpUrl}/tools/invoke`, {
     method: "POST",
     headers: {
+      "x-openclaw-token": gatewayToken,
       "Authorization": `Bearer ${gatewayToken}`,
       "Content-Type": "application/json",
     },
