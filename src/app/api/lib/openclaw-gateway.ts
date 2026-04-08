@@ -17,7 +17,7 @@ import crypto from "node:crypto"
 // ─── Protocol Constants ──────────────────────────────────────
 
 const PROTOCOL_VERSION = 3
-const DEFAULT_SCOPES = ["operator.admin"]
+const DEFAULT_SCOPES = ["operator.admin", "operator.write", "operator.read"]
 const DEFAULT_ROLE = "operator"
 const DEFAULT_CLIENT_ID = "gateway-client"
 const DEFAULT_CLIENT_MODE = "backend"
