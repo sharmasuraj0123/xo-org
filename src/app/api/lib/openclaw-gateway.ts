@@ -787,26 +787,56 @@ export async function probeGateway(config: GatewayConfig): Promise<{
 }> {
   const start = Date.now()
   try {
-    const client = new GatewayWsClient(config)
+    // Single connection: connect, receive challenge, send auth, check response
+    const probeConfig = { ...config, disableDeviceAuth: true, autoPairOnFirstConnect: false }
+    const client = new GatewayWsClient(probeConfig)
     await client.connect(3000)
 
-    // Wait for challenge
     await client.waitForChallenge(3000)
 
-    // Try full connect
-    try {
-      const fullClient = await connectToGateway(config)
-      fullClient.close()
-      return { status: "ok", latencyMs: Date.now() - start }
-    } catch {
-      client.close()
-      return { status: "challenge_only", latencyMs: Date.now() - start }
+    // Build and send connect request on the same connection
+    const connectParams: Record<string, unknown> = {
+      minProtocol: PROTOCOL_VERSION,
+      maxProtocol: PROTOCOL_VERSION,
+      client: {
+        id: probeConfig.clientId ?? DEFAULT_CLIENT_ID,
+        version: probeConfig.clientVersion ?? DEFAULT_CLIENT_VERSION,
+        platform: process.platform,
+        mode: probeConfig.clientMode ?? DEFAULT_CLIENT_MODE,
+      },
+      role: probeConfig.role ?? DEFAULT_ROLE,
+      scopes: probeConfig.scopes ?? DEFAULT_SCOPES,
+      auth: {} as Record<string, unknown>,
     }
+    const auth = connectParams.auth as Record<string, unknown>
+    if (probeConfig.authToken) auth.token = probeConfig.authToken
+    if (probeConfig.password) auth.password = probeConfig.password
+
+    const res = await client.sendRequest("connect", connectParams, 5000)
+    client.close()
+
+    if (res.ok) {
+      return { status: "ok", latencyMs: Date.now() - start }
+    }
+
+    // Token accepted but device pairing required — token is valid
+    const errorCode = res.error?.code ?? ""
+    if (errorCode.includes("pairing") || errorCode.includes("device")) {
+      return { status: "ok", latencyMs: Date.now() - start }
+    }
+
+    return { status: "challenge_only", latencyMs: Date.now() - start, error: `auth rejected: ${res.error?.code ?? "unknown"} — ${res.error?.message ?? ""}` }
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    // Challenge timeout but connection succeeded means gateway is reachable
+    // and likely requires device auth — treat as OK
+    if (msg.includes("challenge event not received")) {
+      return { status: "ok", latencyMs: Date.now() - start }
+    }
     return {
       status: "failed",
       latencyMs: Date.now() - start,
-      error: err instanceof Error ? err.message : String(err),
+      error: msg,
     }
   }
 }

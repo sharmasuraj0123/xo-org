@@ -64,7 +64,7 @@ export async function POST(req: Request) {
     checks.push({ code: "gateway_latency", level: "info", message: `Round-trip: ${probe.latencyMs}ms` })
   } else if (probe.status === "challenge_only") {
     checks.push({ code: "gateway_reachable", level: "info", message: `Gateway reachable at ${url}` })
-    checks.push({ code: "gateway_auth", level: "warn", message: "Connected but authentication failed — check token/password" })
+    checks.push({ code: "gateway_auth", level: "warn", message: probe.error || "Connected but authentication failed — check token/password" })
   } else {
     checks.push({ code: "gateway_reachable", level: "error", message: probe.error ?? `Cannot reach Gateway at ${url}` })
   }
