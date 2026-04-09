@@ -370,8 +370,8 @@ export async function connectToGateway(
   const client = new GatewayWsClient(config)
   await client.connect(connectTimeout)
 
-  // Step 3: Wait for challenge
-  await client.waitForChallenge(5000)
+  // Step 3: Wait for challenge nonce
+  const nonce = await client.waitForChallenge(5000)
 
   // Step 4: Build connect params
   const connectParams: Record<string, unknown> = {
@@ -389,9 +389,29 @@ export async function connectToGateway(
     auth: {} as Record<string, unknown>,
   }
 
-  // Auth credentials — token only
+  // Auth token
   const auth = connectParams.auth as Record<string, unknown>
   if (config.authToken) auth.token = config.authToken
+
+  // Ephemeral device signing — V3 protocol requires this for operator.write scope
+  const { publicKey: devPub, privateKey: devPriv } = crypto.generateKeyPairSync("ed25519")
+  const rawPub = devPub.export({ type: "spki", format: "der" })
+  const raw32 = rawPub.subarray(rawPub.length - 32)
+  const deviceId = crypto.randomUUID()
+  const signedAt = Date.now()
+  const sigPayload = [
+    "v3", deviceId, config.clientId ?? DEFAULT_CLIENT_ID,
+    config.clientMode ?? DEFAULT_CLIENT_MODE, config.role ?? DEFAULT_ROLE,
+    (config.scopes ?? DEFAULT_SCOPES).join(","), String(signedAt),
+    config.authToken ?? "", nonce, process.platform, "",
+  ].join("|")
+  connectParams.device = {
+    id: deviceId,
+    publicKey: raw32.toString("base64url"),
+    signature: crypto.sign(null, Buffer.from(sigPayload), devPriv).toString("base64url"),
+    signedAt,
+    nonce,
+  }
 
   // Step 6: Send connect request
   const res = await client.sendRequest("connect", connectParams, connectTimeout)
