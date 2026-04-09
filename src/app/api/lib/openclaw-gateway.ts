@@ -57,6 +57,87 @@ function clearDeviceCache(config: GatewayConfig) {
   deviceKeyCache.delete(cacheKey)
 }
 
+/**
+ * Auto-approve device pairing by opening a separate WebSocket connection
+ * with "operator.pairing" scope, listing pending pairing requests, and
+ * approving the one that matches our device.
+ *
+ * This implements the exact flow from the Paperclip deep-dive:
+ *  1. Open NEW WebSocket (with "operator.pairing" scope)
+ *  2. Connect with auth credentials (token-only, no device)
+ *  3. List pending pairing requests via "device.pair.list"
+ *  4. Approve the matching request via "device.pair.approve"
+ *  5. Close pairing WebSocket
+ */
+async function autoApproveDevicePairing(
+  config: GatewayConfig,
+  deviceId: string
+): Promise<boolean> {
+  try {
+    // Open a separate connection with pairing scope (no device auth needed)
+    const pairingConfig = {
+      ...config,
+      disableDeviceAuth: true,
+      scopes: ["operator.admin", "operator.pairing"],
+    }
+    const pairClient = new GatewayWsClient(pairingConfig)
+    await pairClient.connect(5000)
+    await pairClient.waitForChallenge(5000)
+
+    // Connect with token-only auth and pairing scope
+    const connectParams: Record<string, unknown> = {
+      minProtocol: PROTOCOL_VERSION,
+      maxProtocol: PROTOCOL_VERSION,
+      client: {
+        id: config.clientId ?? DEFAULT_CLIENT_ID,
+        version: config.clientVersion ?? DEFAULT_CLIENT_VERSION,
+        platform: process.platform,
+        mode: config.clientMode ?? DEFAULT_CLIENT_MODE,
+      },
+      role: config.role ?? DEFAULT_ROLE,
+      scopes: ["operator.admin", "operator.pairing"],
+      auth: {} as Record<string, unknown>,
+    }
+    const auth = connectParams.auth as Record<string, unknown>
+    if (config.authToken) auth.token = config.authToken
+    if (config.password) auth.password = config.password
+
+    const connectRes = await pairClient.sendRequest("connect", connectParams, 5000)
+    if (!connectRes.ok) {
+      pairClient.close()
+      return false
+    }
+
+    // List pending pairing requests
+    const listRes = await pairClient.sendRequest("device.pair.list", {}, 5000)
+    const requests = (listRes.payload as { requests?: Array<{ id: string; deviceId?: string }> })?.requests ?? []
+
+    // Find the request matching our device, or pick the latest one
+    let requestId: string | undefined
+    const matching = requests.find((r) => r.deviceId === deviceId)
+    if (matching) {
+      requestId = matching.id
+    } else if (requests.length > 0) {
+      requestId = requests[requests.length - 1].id
+    }
+
+    if (requestId) {
+      const approveRes = await pairClient.sendRequest(
+        "device.pair.approve",
+        { requestId },
+        5000
+      )
+      pairClient.close()
+      return approveRes.ok
+    }
+
+    pairClient.close()
+    return false
+  } catch {
+    return false
+  }
+}
+
 // ─── Frame Types ─────────────────────────────────────────────
 
 interface GatewayRequestFrame {
@@ -531,7 +612,8 @@ export async function executeAgent(
   config: GatewayConfig,
   ctx: WakeContext,
   onEvent?: (event: AgentEvent) => void,
-  onLog?: (stream: "stdout" | "stderr", chunk: string) => void
+  onLog?: (stream: "stdout" | "stderr", chunk: string) => void,
+  _pairingAttempted = false
 ): Promise<ExecutionResult> {
   const events: AgentEvent[] = []
   const assistantChunks: string[] = []
@@ -608,17 +690,39 @@ export async function executeAgent(
     if (!agentRes.ok) {
       const agentErrMsg = agentRes.error?.message ?? "unknown"
 
-      // If the agent request failed due to missing scope, the connection
-      // succeeded (token-only) but lacks write permission. Retry the entire
-      // flow with device auth enabled to get operator.write scope.
-      if (agentErrMsg.includes("missing scope") && config.disableDeviceAuth) {
+      // If the agent request failed due to missing scope, the device key
+      // was sent but the gateway didn't pair it. We need to explicitly
+      // trigger device pairing and retry.
+      if (agentErrMsg.includes("missing scope") && !_pairingAttempted) {
         client.close()
         client = null
-        onLog?.("stderr", `[openclaw-gateway] agent rejected: ${agentErrMsg} — retrying with device auth`)
-        const retryConfig = { ...config, disableDeviceAuth: false }
-        // Clear any cached device key so a fresh one is generated for pairing
-        clearDeviceCache(retryConfig)
-        return executeAgent(retryConfig, ctx, onEvent, onLog)
+        onLog?.("stderr", `[openclaw-gateway] agent rejected: ${agentErrMsg} — attempting device pairing`)
+
+        if (!config.disableDeviceAuth) {
+          // Device auth was enabled — try to pair the device
+          const device = getDeviceIdentity(config)
+          const paired = await autoApproveDevicePairing(config, device.deviceId)
+          onLog?.("stdout", `[openclaw-gateway] device pairing ${paired ? "succeeded" : "failed"} for ${device.deviceId}`)
+
+          if (paired) {
+            // Retry the entire flow — device should now be paired
+            return executeAgent(config, ctx, onEvent, onLog, true)
+          }
+        }
+
+        // If pairing failed or device auth was disabled, try with device auth toggled
+        if (config.disableDeviceAuth) {
+          // Was disabled — enable it and retry
+          const retryConfig = { ...config, disableDeviceAuth: false }
+          clearDeviceCache(retryConfig)
+          return executeAgent(retryConfig, ctx, onEvent, onLog, true)
+        }
+
+        // Device auth was on, pairing failed — try without device auth as last resort
+        return executeAgent(
+          { ...config, disableDeviceAuth: true, scopes: ["operator.read"] },
+          ctx, onEvent, onLog, true
+        )
       }
 
       return {
