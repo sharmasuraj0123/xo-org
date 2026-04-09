@@ -353,7 +353,8 @@ export class GatewayWsClient {
 // ─── Connection Handshake ────────────────────────────────────
 
 export async function connectToGateway(
-  config: GatewayConfig
+  config: GatewayConfig,
+  _retryCount = 0
 ): Promise<GatewayWsClient> {
   // Step 1: Validate URL
   const url = config.url
@@ -417,8 +418,28 @@ export async function connectToGateway(
   const res = await client.sendRequest("connect", connectParams, connectTimeout)
 
   if (!res.ok) {
+    const errCode = res.error?.code ?? ""
+    const errMsg = res.error?.message ?? errCode
+
+    // If gateway wants device pairing, approve it and retry once
+    if (errCode === "pairing_required" && _retryCount < 2) {
+      const payload = res.payload as Record<string, unknown> | undefined
+      const pairId = payload?.pairingRequestId as string | undefined
+      if (pairId) {
+        await client.sendRequest("device.pair.approve", { requestId: pairId }, 5000).catch(() => {})
+      }
+      client.close()
+      return connectToGateway(config, _retryCount + 1)
+    }
+
+    // If device identity mismatch, retry once with a fresh ephemeral key
+    if (errMsg.includes("device identity mismatch") && _retryCount < 1) {
+      client.close()
+      return connectToGateway(config, _retryCount + 1)
+    }
+
     client.close()
-    throw new Error(`Gateway connect failed: ${res.error?.message ?? res.error?.code ?? "unknown"}`)
+    throw new Error(`Gateway connect failed: ${errMsg}`)
   }
 
   return client
