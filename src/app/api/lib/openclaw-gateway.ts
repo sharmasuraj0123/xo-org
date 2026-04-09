@@ -86,13 +86,6 @@ export interface GatewayConfig {
   workspaceRuntime?: Record<string, unknown> // Reserved workspace runtime metadata
 }
 
-export interface DeviceIdentity {
-  deviceId: string
-  publicKeyRawBase64Url: string
-  privateKeyPem: string
-  source: "configured" | "ephemeral"
-}
-
 export interface AgentEvent {
   runId: string
   stream: "assistant" | "error" | "lifecycle"
@@ -191,73 +184,6 @@ export function buildAgentParams(
     idempotencyKey: ctx.runId,
     timeout: config.waitTimeoutMs ?? (config.timeoutSec ?? 120) * 1000,
     paperclip: buildPaperclipPayload(ctx, config),
-  }
-}
-
-// ─── ED25519 Device Identity ─────────────────────────────────
-
-export function resolveDeviceIdentity(config: GatewayConfig): DeviceIdentity {
-  if (config.privateKeyPem) {
-    // Use configured key
-    const keyObj = crypto.createPrivateKey(config.privateKeyPem)
-    const publicKey = crypto.createPublicKey(keyObj)
-    const rawPublic = publicKey.export({ type: "spki", format: "der" })
-    // ED25519 public key is last 32 bytes of SPKI DER
-    const raw32 = rawPublic.subarray(rawPublic.length - 32)
-    // Derive stable deviceId from public key so gateway recognises paired device
-    const hash = crypto.createHash("sha256").update(raw32).digest()
-    const deviceId = [
-      hash.subarray(0, 4), hash.subarray(4, 6), hash.subarray(6, 8),
-      hash.subarray(8, 10), hash.subarray(10, 16),
-    ].map(b => b.toString("hex")).join("-")
-    return {
-      deviceId,
-      publicKeyRawBase64Url: raw32.toString("base64url"),
-      privateKeyPem: config.privateKeyPem,
-      source: "configured",
-    }
-  }
-
-  // Generate ephemeral ED25519 keypair
-  const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519")
-  const rawPublic = publicKey.export({ type: "spki", format: "der" })
-  const raw32 = rawPublic.subarray(rawPublic.length - 32)
-  const pemPrivate = privateKey.export({ type: "pkcs8", format: "pem" }) as string
-
-  return {
-    deviceId: crypto.randomUUID(),
-    publicKeyRawBase64Url: raw32.toString("base64url"),
-    privateKeyPem: pemPrivate,
-    source: "ephemeral",
-  }
-}
-
-function signDevicePayload(
-  nonce: string,
-  identity: DeviceIdentity,
-  config: GatewayConfig
-): { signature: string; signedAt: number } {
-  const signedAt = Date.now()
-  const role = config.role ?? DEFAULT_ROLE
-  const scopes = (config.scopes ?? DEFAULT_SCOPES).join(",")
-  const clientId = config.clientId ?? DEFAULT_CLIENT_ID
-  const clientMode = config.clientMode ?? DEFAULT_CLIENT_MODE
-  const token = config.authToken ?? ""
-  const platform = process.platform
-  const deviceFamily = config.deviceFamily ?? ""
-
-  // V3 pipe-delimited payload
-  const payload = [
-    "v3", identity.deviceId, clientId, clientMode, role, scopes,
-    String(signedAt), token, nonce, platform, deviceFamily,
-  ].join("|")
-
-  const privateKey = crypto.createPrivateKey(identity.privateKeyPem)
-  const sig = crypto.sign(null, Buffer.from(payload), privateKey)
-
-  return {
-    signature: sig.toString("base64url"),
-    signedAt,
   }
 }
 
@@ -444,8 +370,8 @@ export async function connectToGateway(
   const client = new GatewayWsClient(config)
   await client.connect(connectTimeout)
 
-  // Step 3: Wait for challenge nonce
-  const nonce = await client.waitForChallenge(5000)
+  // Step 3: Wait for challenge
+  await client.waitForChallenge(5000)
 
   // Step 4: Build connect params
   const connectParams: Record<string, unknown> = {
@@ -463,107 +389,22 @@ export async function connectToGateway(
     auth: {} as Record<string, unknown>,
   }
 
-  // Auth credentials
+  // Auth credentials — token only
   const auth = connectParams.auth as Record<string, unknown>
   if (config.authToken) auth.token = config.authToken
-  if (config.deviceToken) auth.deviceToken = config.deviceToken
-  if (config.password) auth.password = config.password
-
-  // Step 5: Device authentication (ED25519)
-  if (!config.disableDeviceAuth) {
-    const identity = resolveDeviceIdentity(config)
-    const { signature, signedAt } = signDevicePayload(nonce, identity, config)
-
-    connectParams.device = {
-      id: identity.deviceId,
-      publicKey: identity.publicKeyRawBase64Url,
-      signature,
-      signedAt,
-      nonce,
-    }
-  }
 
   // Step 6: Send connect request
   const res = await client.sendRequest("connect", connectParams, connectTimeout)
 
   if (!res.ok) {
-    const errorCode = res.error?.code ?? "unknown"
-
-    // Handle pairing required
-    if (errorCode === "pairing_required" && config.autoPairOnFirstConnect !== false) {
-      // Auto-pair flow: close, pair, reconnect
-      client.close()
-      await autoApproveDevicePairing(config, res)
-      // Retry connection
-      return connectToGateway({ ...config, autoPairOnFirstConnect: false })
-    }
-
     client.close()
-    throw new Error(`Gateway connect failed: ${res.error?.message ?? errorCode}`)
+    throw new Error(`Gateway connect failed: ${res.error?.message ?? res.error?.code ?? "unknown"}`)
   }
 
   return client
 }
 
-// ─── Auto Device Pairing ─────────────────────────────────────
 
-async function autoApproveDevicePairing(
-  config: GatewayConfig,
-  errorRes: GatewayResponseFrame
-): Promise<void> {
-  // Extract pairing request ID from error
-  const payload = errorRes.payload as Record<string, unknown> | undefined
-  const requestId = payload?.pairingRequestId as string | undefined
-
-  // Open a new connection with pairing scope
-  const pairingConfig: GatewayConfig = {
-    ...config,
-    scopes: ["operator.pairing"],
-    disableDeviceAuth: true,
-    autoPairOnFirstConnect: false,
-  }
-
-  const client = new GatewayWsClient(pairingConfig)
-  await client.connect(10_000)
-  const nonce = await client.waitForChallenge(5000)
-
-  // Connect with auth credentials (no device auth for pairing)
-  const connectParams: Record<string, unknown> = {
-    minProtocol: PROTOCOL_VERSION,
-    maxProtocol: PROTOCOL_VERSION,
-    client: { id: DEFAULT_CLIENT_ID, version: DEFAULT_CLIENT_VERSION, platform: process.platform, mode: DEFAULT_CLIENT_MODE },
-    role: DEFAULT_ROLE,
-    scopes: ["operator.pairing"],
-    auth: {} as Record<string, unknown>,
-  }
-  const auth = connectParams.auth as Record<string, unknown>
-  if (config.authToken) auth.token = config.authToken
-  if (config.password) auth.password = config.password
-
-  const connectRes = await client.sendRequest("connect", connectParams, 10_000)
-  if (!connectRes.ok) {
-    client.close()
-    throw new Error(`Pairing connect failed: ${connectRes.error?.message}`)
-  }
-
-  let pairId = requestId
-  if (!pairId) {
-    // List pending pairing requests
-    const listRes = await client.sendRequest("device.pair.list", {}, 5000)
-    if (listRes.ok && listRes.payload) {
-      const requests = (listRes.payload as Record<string, unknown>).requests as Array<Record<string, unknown>> | undefined
-      if (requests?.length) {
-        pairId = requests[requests.length - 1].id as string
-      }
-    }
-  }
-
-  if (pairId) {
-    await client.sendRequest("device.pair.approve", { requestId: pairId }, 5000)
-  }
-
-  client.close()
-}
 
 // ─── Agent Execution (Full Pipeline) ─────────────────────────
 

@@ -48,7 +48,6 @@ export async function POST(req: Request) {
     const config: GatewayConfig = {
       url: agent.gatewayUrl,
       authToken: agent.gatewayToken,
-      disableDeviceAuth: true,
     }
 
     const client = await connectToGateway(config)
