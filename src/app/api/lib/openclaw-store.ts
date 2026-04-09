@@ -81,10 +81,9 @@ const STORE_PATH = path.join(process.cwd(), ".data", "openclaw-agents.json")
 function migrateAgent(raw: Record<string, unknown>): OpenClawAgent {
   const a = raw as Record<string, unknown>
 
-  // Migrate gatewayUrl → url (ws:// → http://)
+  // Migrate gatewayUrl → url
   if (!a.url && a.gatewayUrl) {
-    const gwUrl = String(a.gatewayUrl)
-    a.url = gwUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:")
+    a.url = String(a.gatewayUrl)
     delete a.gatewayUrl
   }
 
