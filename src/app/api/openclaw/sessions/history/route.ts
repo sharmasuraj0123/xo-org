@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
+import { gatewayToolInvoke } from "../../../lib/openclaw-gateway"
 
 /**
- * Fetches chat history for a specific OpenClaw session via HTTP Tools Invoke API.
- *
- * Uses POST /tools/invoke instead of CLI exec — ~50ms vs ~5400ms.
+ * Fetches chat history for a specific OpenClaw session.
  *
  * Query params:
- *   sessionKey  - required: the full Gateway session key (e.g. "agent:main:main")
+ *   sessionKey  - required: the full session key (e.g. "agent:main:main")
  *   limit       - optional: number of messages to return (default 100)
  */
 
@@ -37,55 +36,29 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "sessionKey is required" }, { status: 400 })
   }
 
+  if (!GATEWAY_URL) {
+    return NextResponse.json({ error: "OPENCLAW_GATEWAY_URL not configured" }, { status: 500 })
+  }
+
   try {
-    const res = await fetch(`${GATEWAY_URL}/tools/invoke`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${GATEWAY_TOKEN}`,
-        "x-openclaw-token": GATEWAY_TOKEN,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        tool: "sessions_history",
-        args: { sessionKey, limit },
-      }),
-      signal: AbortSignal.timeout(8000),
-    })
-
-    if (!res.ok) {
-      return NextResponse.json(
-        { error: `Gateway returned ${res.status}` },
-        { status: 502 }
-      )
-    }
-
-    const body = await res.json() as {
-      ok: boolean
-      result?: {
-        details?: {
-          sessionKey: string
-          messages: GatewayMessage[]
-        }
-        content?: Array<{ type: string; text?: string }>
+    const result = (await gatewayToolInvoke(GATEWAY_URL, GATEWAY_TOKEN, "sessions_history", { sessionKey, limit }, 8000)) as {
+      details?: {
+        sessionKey: string
+        messages: GatewayMessage[]
       }
-      error?: string
-    }
-
-    if (!body.ok) {
-      return NextResponse.json({ error: body.error ?? "Gateway error" }, { status: 502 })
+      content?: Array<{ type: string; text?: string }>
     }
 
     // sessions_history returns details.messages directly
-    const details = body.result?.details
-    if (details?.messages) {
+    if (result?.details?.messages) {
       return NextResponse.json({
-        sessionKey: details.sessionKey,
-        messages: details.messages,
+        sessionKey: result.details.sessionKey,
+        messages: result.details.messages,
       })
     }
 
-    // Fallback: parse from text content (tools_invoke text blob)
-    const textContent = body.result?.content?.find((c) => c.type === "text")?.text
+    // Fallback: parse from text content
+    const textContent = result?.content?.find((c) => c.type === "text")?.text
     if (textContent) {
       try {
         const parsed = JSON.parse(textContent)

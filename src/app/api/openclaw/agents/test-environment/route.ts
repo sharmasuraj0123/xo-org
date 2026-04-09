@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server"
-import { probeGateway, type GatewayConfig } from "../../../lib/openclaw-gateway"
+import { testEnvironment } from "../../../lib/openclaw-adapter"
+import type { OpenClawConfig } from "../../../lib/openclaw-gateway"
 
 /**
  * POST /api/openclaw/agents/test-environment
  *
- * Test Gateway connectivity using the real WebSocket V3 protocol.
- * Matches Paperclip's "Test environment" button behavior:
- *  1. Open WebSocket (3s timeout)
- *  2. Receive connect.challenge event
- *  3. Send connect request with credentials
- *  4. Report: "ok" | "challenge_only" | "failed"
+ * Test webhook connectivity:
+ *  1. Validate URL format (http:// or https://)
+ *  2. Send probe request to webhook endpoint
+ *  3. Report: "pass" | "warn" | "fail"
  */
 export async function POST(req: Request) {
   let body: Record<string, unknown> = {}
@@ -17,71 +16,27 @@ export async function POST(req: Request) {
     body = await req.json()
   } catch { /* use defaults */ }
 
-  const { gatewayUrl, gatewayToken, password, disableDeviceAuth } = body as {
-    gatewayUrl?: string
-    gatewayToken?: string
-    password?: string
-    disableDeviceAuth?: boolean
+  const { url, webhookAuthHeader, customHeaders, method } = body as {
+    url?: string
+    webhookAuthHeader?: string
+    customHeaders?: Record<string, string>
+    method?: string
   }
 
-  const url = gatewayUrl || process.env.OPENCLAW_GATEWAY_URL || "ws://127.0.0.1:18789"
-  const token = gatewayToken || process.env.OPENCLAW_GATEWAY_TOKEN || ""
+  const webhookUrl = url || process.env.OPENCLAW_GATEWAY_URL || ""
+  const envToken = process.env.OPENCLAW_GATEWAY_TOKEN || ""
 
-  const config: GatewayConfig = {
-    url,
-    authToken: token,
-    password,
-    disableDeviceAuth: disableDeviceAuth ?? false,
-    autoPairOnFirstConnect: true,
+  const config: OpenClawConfig = {
+    url: webhookUrl,
+    webhookAuthHeader: webhookAuthHeader || (envToken ? `Bearer ${envToken}` : undefined),
+    customHeaders,
+    method,
   }
 
-  const checks: Array<{ code: string; level: "info" | "warn" | "error"; message: string }> = []
-
-  // Validate URL format
-  try {
-    const parsed = new URL(url)
-    if (!["ws:", "wss:"].includes(parsed.protocol)) {
-      checks.push({ code: "url_protocol", level: "error", message: `URL must use ws:// or wss:// (got ${parsed.protocol})` })
-      return NextResponse.json({ ok: true, data: { status: "fail", gatewayUrl: url, latencyMs: 0, checks } })
-    }
-    if (parsed.protocol === "ws:" && !["localhost", "127.0.0.1", "0.0.0.0"].includes(parsed.hostname)) {
-      checks.push({ code: "url_insecure", level: "warn", message: `Using ws:// to non-localhost (${parsed.hostname}) — consider wss://` })
-    }
-  } catch {
-    checks.push({ code: "url_invalid", level: "error", message: `Cannot parse URL: ${url}` })
-    return NextResponse.json({ ok: true, data: { status: "fail", gatewayUrl: url, latencyMs: 0, checks } })
-  }
-
-  if (!token && !password) {
-    checks.push({ code: "auth_missing", level: "warn", message: "No auth token or password — connection may fail" })
-  }
-
-  // Probe the Gateway via WebSocket
-  const probe = await probeGateway(config)
-
-  if (probe.status === "ok") {
-    checks.push({ code: "gateway_reachable", level: "info", message: `Gateway authenticated at ${url}` })
-    checks.push({ code: "gateway_latency", level: "info", message: `Round-trip: ${probe.latencyMs}ms` })
-    if (probe.writeVerified === false) {
-      checks.push({ code: "gateway_write", level: "warn", message: "Connected but write access not verified — ensure your token has operator.write scope" })
-    }
-  } else if (probe.status === "challenge_only") {
-    checks.push({ code: "gateway_reachable", level: "info", message: `Gateway reachable at ${url}` })
-    checks.push({ code: "gateway_auth", level: "warn", message: probe.error || "Connected but authentication failed — check token/password" })
-  } else {
-    checks.push({ code: "gateway_reachable", level: "error", message: probe.error ?? `Cannot reach Gateway at ${url}` })
-  }
-
-  const hasErrors = checks.some((c) => c.level === "error")
-  const hasWarnings = checks.some((c) => c.level === "warn")
+  const result = await testEnvironment(config)
 
   return NextResponse.json({
     ok: true,
-    data: {
-      status: hasErrors ? "fail" : hasWarnings ? "warn" : "pass",
-      gatewayUrl: url,
-      latencyMs: probe.latencyMs,
-      checks,
-    },
+    data: result,
   })
 }

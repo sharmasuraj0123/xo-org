@@ -1,91 +1,35 @@
 /**
- * OpenClaw Gateway adapter.
+ * OpenClaw HTTP adapter — helper functions for session operations.
  *
  * Matches the Paperclip adapter pattern:
- *  - Each agent has its own Gateway URL + token
- *  - Invocation via POST /tools/invoke with sessions_send
+ *  - Each agent has its own webhook URL + auth
+ *  - Session operations via Gateway HTTP /tools/invoke
  *  - Payload template interpolated with context vars
- *  - Fire-and-forget async delivery (no blocking wait)
- *  - Results polled later via sessions_history
+ *  - Test environment via webhook probe
  */
+
+import {
+  gatewayToolInvoke,
+  probeWebhook,
+  interpolatePayload,
+  type OpenClawConfig,
+  type ProbeResult,
+} from "./openclaw-gateway"
+
+// Re-export for backward compatibility
+export { interpolatePayload }
+export type { ProbeResult }
 
 // ─── Fallback Config ─────────────────────────────────────────
 
 const DEFAULT_GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || ""
 const DEFAULT_GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || ""
 
-// ─── Gateway HTTP Helper ─────────────────────────────────────
-
-async function gatewayInvoke(
-  gatewayUrl: string,
-  gatewayToken: string,
-  tool: string,
-  args: Record<string, unknown> = {},
-  timeoutMs = 10_000
-): Promise<unknown> {
-  const res = await fetch(`${gatewayUrl}/tools/invoke`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${gatewayToken}`,
-      "x-openclaw-token": gatewayToken,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ tool, args }),
-    signal: AbortSignal.timeout(timeoutMs),
-  })
-
-  if (!res.ok) {
-    throw new Error(`Gateway HTTP ${res.status}: ${await res.text()}`)
-  }
-
-  const body = (await res.json()) as {
-    ok: boolean
-    result?: unknown
-    error?: string
-  }
-
-  if (!body.ok) {
-    throw new Error(`Gateway error: ${body.error ?? "Unknown"}`)
-  }
-
-  return body.result
-}
-
-// ─── Payload Template Interpolation ──────────────────────────
-
-/**
- * Interpolate {{variable}} placeholders in a payload template.
- *
- * Supported variables:
- *   {{agent.id}}, {{agent.name}}, {{agent.role}}, {{agent.model}}
- *   {{run.id}}, {{run.source}}
- *   {{task.id}}, {{task.title}}, {{task.description}}
- *   {{prompt}}
- */
-export function interpolatePayload(
-  template: Record<string, unknown>,
-  context: Record<string, string>
-): Record<string, unknown> {
-  const result: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(template)) {
-    if (typeof value === "string") {
-      result[key] = value.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (_, path) => {
-        return context[path] ?? `{{${path}}}`
-      })
-    } else if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-      result[key] = interpolatePayload(value as Record<string, unknown>, context)
-    } else {
-      result[key] = value
-    }
-  }
-  return result
-}
-
 // ─── Test Environment ────────────────────────────────────────
 
 export interface EnvironmentTestResult {
   status: "pass" | "warn" | "fail"
-  gatewayUrl: string
+  webhookUrl: string
   latencyMs: number
   checks: Array<{
     code: string
@@ -95,39 +39,46 @@ export interface EnvironmentTestResult {
 }
 
 export async function testEnvironment(
-  gatewayUrl?: string,
-  gatewayToken?: string
+  config: OpenClawConfig
 ): Promise<EnvironmentTestResult> {
-  const url = gatewayUrl || DEFAULT_GATEWAY_URL
-  const token = gatewayToken || DEFAULT_GATEWAY_TOKEN
+  const url = config.url
   const checks: EnvironmentTestResult["checks"] = []
-  const start = Date.now()
 
-  // Check 1: Gateway reachable
+  if (!url) {
+    checks.push({ code: "url_missing", level: "error", message: "No webhook URL configured" })
+    return { status: "fail", webhookUrl: "", latencyMs: 0, checks }
+  }
+
+  // URL format validation
   try {
-    const result = (await gatewayInvoke(url, token, "sessions_list", {}, 5000)) as {
-      details?: { sessions: unknown[]; count: number }
+    const parsed = new URL(url)
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      checks.push({ code: "url_protocol", level: "error", message: `URL must use http:// or https:// (got ${parsed.protocol})` })
+      return { status: "fail", webhookUrl: url, latencyMs: 0, checks }
     }
-    const count = result?.details?.count ?? 0
-    checks.push({
-      code: "gateway_reachable",
-      level: "info",
-      message: `Gateway reachable at ${url}`,
-    })
-    checks.push({
-      code: "sessions_available",
-      level: count > 0 ? "info" : "warn",
-      message: count > 0
-        ? `${count} active session${count !== 1 ? "s" : ""} found`
-        : "No active sessions — start an agent in OpenClaw first",
-    })
-  } catch (err) {
-    checks.push({
-      code: "gateway_reachable",
-      level: "error",
-      message: `Cannot reach Gateway at ${url}: ${err instanceof Error ? err.message : String(err)}`,
-    })
-    return { status: "fail", gatewayUrl: url, latencyMs: Date.now() - start, checks }
+    if (parsed.protocol === "http:" && !["localhost", "127.0.0.1", "0.0.0.0"].includes(parsed.hostname)) {
+      checks.push({ code: "url_insecure", level: "warn", message: `Using http:// to non-localhost (${parsed.hostname}) — consider https://` })
+    }
+  } catch {
+    checks.push({ code: "url_invalid", level: "error", message: `Cannot parse URL: ${url}` })
+    return { status: "fail", webhookUrl: url, latencyMs: 0, checks }
+  }
+
+  if (!config.webhookAuthHeader) {
+    checks.push({ code: "auth_missing", level: "warn", message: "No authorization header configured — requests may be rejected" })
+  }
+
+  // Probe the webhook endpoint
+  const probe = await probeWebhook(config)
+
+  if (probe.status === "ok") {
+    checks.push({ code: "webhook_reachable", level: "info", message: `Webhook reachable at ${url}` })
+    checks.push({ code: "webhook_latency", level: "info", message: `Round-trip: ${probe.latencyMs}ms` })
+  } else if (probe.status === "auth_failed") {
+    checks.push({ code: "webhook_reachable", level: "info", message: `Webhook reachable at ${url}` })
+    checks.push({ code: "webhook_auth", level: "error", message: `Authentication failed (HTTP ${probe.httpStatus})` })
+  } else {
+    checks.push({ code: "webhook_reachable", level: "error", message: probe.error ?? `Cannot reach webhook at ${url}` })
   }
 
   const hasErrors = checks.some((c) => c.level === "error")
@@ -135,42 +86,13 @@ export async function testEnvironment(
 
   return {
     status: hasErrors ? "fail" : hasWarnings ? "warn" : "pass",
-    gatewayUrl: url,
-    latencyMs: Date.now() - start,
+    webhookUrl: url,
+    latencyMs: probe.latencyMs,
     checks,
   }
 }
 
-// ─── Agent Invocation ────────────────────────────────────────
-
-/**
- * Send a prompt to an agent via sessions_send.
- * Fire-and-forget — does not wait for agent response.
- */
-export async function invokeAgent(
-  gatewayUrl: string,
-  gatewayToken: string,
-  sessionKey: string,
-  message: string,
-  options: {
-    model?: string
-    metadata?: Record<string, unknown>
-  } = {}
-): Promise<unknown> {
-  return gatewayInvoke(
-    gatewayUrl,
-    gatewayToken,
-    "sessions_send",
-    {
-      sessionKey,
-      message,
-      ...options,
-    },
-    60_000
-  )
-}
-
-// ─── Session Operations ──────────────────────────────────────
+// ─── Session Operations (via Gateway HTTP API) ───────────────
 
 export interface GatewaySession {
   key: string
@@ -191,7 +113,8 @@ export async function listSessions(
 ): Promise<GatewaySession[]> {
   const url = gatewayUrl || DEFAULT_GATEWAY_URL
   const token = gatewayToken || DEFAULT_GATEWAY_TOKEN
-  const result = (await gatewayInvoke(url, token, "sessions_list")) as {
+  if (!url) return []
+  const result = (await gatewayToolInvoke(url, token, "sessions_list")) as {
     details?: { sessions: GatewaySession[]; count: number }
   }
   return result?.details?.sessions ?? []
@@ -205,5 +128,6 @@ export async function getSessionHistory(
 ): Promise<unknown> {
   const url = gatewayUrl || DEFAULT_GATEWAY_URL
   const token = gatewayToken || DEFAULT_GATEWAY_TOKEN
-  return gatewayInvoke(url, token, "sessions_history", { sessionKey, limit })
+  if (!url) return null
+  return gatewayToolInvoke(url, token, "sessions_history", { sessionKey, limit })
 }

@@ -15,7 +15,7 @@ export async function GET() {
         modelProvider: a.modelProvider,
         channels: a.channels,
         adapterType: a.adapterType,
-        gatewayUrl: a.gatewayUrl,
+        url: a.url,
         heartbeat: a.heartbeat,
         status: a.status,
         error: a.error,

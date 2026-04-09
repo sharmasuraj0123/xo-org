@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server"
 import { listAgents } from "../../lib/openclaw-store"
+import { gatewayToolInvoke } from "../../lib/openclaw-gateway"
 
 /**
- * Fetches the live session list from all connected OpenClaw Gateways.
+ * Fetches the live session list from all connected OpenClaw gateways.
  *
  * Queries each connected agent's gateway URL for sessions,
  * plus the default env gateway as fallback.
@@ -35,28 +36,14 @@ export type GatewaySession = {
 }
 
 async function fetchSessions(gatewayUrl: string, gatewayToken: string): Promise<GatewaySession[]> {
-  // Convert ws:// to http:// for the HTTP API
-  const httpUrl = gatewayUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:")
-
-  const res = await fetch(`${httpUrl}/tools/invoke`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${gatewayToken}`,
-      "x-openclaw-token": gatewayToken,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ tool: "sessions_list", args: {} }),
-    signal: AbortSignal.timeout(5000),
-  })
-
-  if (!res.ok) return []
-
-  const body = await res.json() as {
-    ok: boolean
-    result?: { details?: { sessions: GatewaySession[]; count: number } }
+  try {
+    const result = (await gatewayToolInvoke(gatewayUrl, gatewayToken, "sessions_list", {}, 5000)) as {
+      details?: { sessions: GatewaySession[]; count: number }
+    }
+    return result?.details?.sessions ?? []
+  } catch {
+    return []
   }
-
-  return body.ok ? (body.result?.details?.sessions ?? []) : []
 }
 
 export async function GET() {
@@ -69,8 +56,8 @@ export async function GET() {
     }
 
     for (const agent of listAgents()) {
-      if (agent.gatewayUrl && !gateways.has(agent.gatewayUrl)) {
-        gateways.set(agent.gatewayUrl, agent.gatewayToken)
+      if (agent.url && !gateways.has(agent.url)) {
+        gateways.set(agent.url, agent.webhookAuthHeader)
       }
     }
 

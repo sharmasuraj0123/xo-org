@@ -11,31 +11,19 @@ import {
   PlusIcon, ZapIcon, Trash2Icon, WifiIcon, WifiOffIcon,
 } from "lucide-react"
 
-interface GatewaySession {
-  key: string
-  sessionId: string
-  model: string
-  modelProvider: string
-  totalTokens: number
-  updatedAt: number
-}
-
 interface ConnectedAgent {
   agentId: string
-  sessionKey: string
   name: string
   role: string
   model: string
   channels: string[]
+  url: string
   status: "connected" | "disconnected"
-  totalTokens: number
+  totalRuns: number
   connectedAt: number
 }
 
 interface OpenClawStatus {
-  configured: boolean
-  gatewayReachable: boolean
-  gatewayLatency: number
   connected: boolean
   agents: ConnectedAgent[]
 }
@@ -47,14 +35,11 @@ export function OpenClawConnector() {
   const [connecting, setConnecting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Available sessions from Gateway
-  const [sessions, setSessions] = useState<GatewaySession[]>([])
-  const [loadingSessions, setLoadingSessions] = useState(false)
-
   // Form state
   const [agentId, setAgentId] = useState("")
   const [name, setName] = useState("")
-  const [selectedSession, setSelectedSession] = useState("")
+  const [url, setUrl] = useState("")
+  const [webhookAuthHeader, setWebhookAuthHeader] = useState("")
   const [role, setRole] = useState("Engineering")
   const [channels, setChannels] = useState("general")
 
@@ -69,49 +54,19 @@ export function OpenClawConnector() {
 
   useEffect(() => { fetchStatus() }, [fetchStatus])
 
-  const fetchSessions = async () => {
-    setLoadingSessions(true)
-    setError(null)
-    try {
-      const res = await fetch("/api/openclaw/agents/connect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}), // No sessionKey = list sessions
-      })
-      const data = await res.json()
-      if (data.ok && data.data?.action === "pick_session") {
-        setSessions(data.data.sessions ?? [])
-        if (data.data.sessions?.length === 0) {
-          setError("No active sessions found in Gateway. Start an agent in OpenClaw first.")
-        }
-      } else {
-        setError(data.error ?? "Cannot reach Gateway")
-      }
-    } catch {
-      setError("Cannot reach OpenClaw Gateway")
-    } finally {
-      setLoadingSessions(false)
-    }
-  }
-
-  const handleShowForm = () => {
-    setShowForm(true)
-    fetchSessions()
-  }
-
   const resetForm = () => {
     setAgentId("")
     setName("")
-    setSelectedSession("")
+    setUrl("")
+    setWebhookAuthHeader("")
     setRole("Engineering")
     setChannels("general")
     setError(null)
-    setSessions([])
   }
 
   const handleConnect = async () => {
     if (!agentId.trim()) { setError("Agent ID is required"); return }
-    if (!selectedSession) { setError("Select a Gateway session"); return }
+    if (!url.trim()) { setError("Webhook URL is required"); return }
 
     setConnecting(true)
     setError(null)
@@ -121,8 +76,9 @@ export function OpenClawConnector() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           agentId: agentId.trim(),
-          sessionKey: selectedSession,
           name: name.trim() || agentId.trim(),
+          url: url.trim(),
+          webhookAuthHeader: webhookAuthHeader.trim() || undefined,
           role,
           channels: channels.split(",").map((c) => c.trim()).filter(Boolean),
         }),
@@ -159,7 +115,7 @@ export function OpenClawConnector() {
             <div className="flex size-10 items-center justify-center rounded-lg bg-muted/60 ring-1 ring-foreground/5">
               <ZapIcon className="size-5 text-muted-foreground" />
             </div>
-            <div><CardTitle>OpenClaw Gateway</CardTitle><CardDescription>Loading...</CardDescription></div>
+            <div><CardTitle>OpenClaw</CardTitle><CardDescription>Loading...</CardDescription></div>
           </div>
         </CardHeader>
         <CardContent className="flex items-center justify-center py-8">
@@ -183,29 +139,23 @@ export function OpenClawConnector() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <CardTitle>OpenClaw Gateway</CardTitle>
-              {status?.gatewayReachable ? (
-                <Badge variant="outline" className="text-xs">
-                  <WifiIcon className="size-3" />
-                  {status.gatewayLatency}ms
-                </Badge>
-              ) : status?.configured ? (
-                <Badge variant="destructive" className="text-xs">
-                  <WifiOffIcon className="size-3" />
-                  Unreachable
-                </Badge>
-              ) : null}
-              {connectedCount > 0 && (
+              <CardTitle>OpenClaw</CardTitle>
+              {connectedCount > 0 ? (
                 <Badge variant="default" className="bg-primary/15 text-primary">
-                  <CheckCircleIcon className="size-3" />
+                  <WifiIcon className="size-3" />
                   {connectedCount} agent{connectedCount !== 1 ? "s" : ""}
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="text-xs">
+                  <WifiOffIcon className="size-3" />
+                  No agents
                 </Badge>
               )}
             </div>
             <CardDescription>
               {connectedCount > 0
                 ? "OpenClaw agents registered in the org bridge"
-                : "Connect OpenClaw Gateway agents to participate in the org — receive tasks, send messages, collaborate."}
+                : "Connect OpenClaw webhook agents to participate in the org — receive tasks, send messages, collaborate."}
             </CardDescription>
           </div>
         </div>
@@ -228,9 +178,11 @@ export function OpenClawConnector() {
                   <div className="flex items-center gap-1.5 mt-0.5">
                     <Badge variant="outline" className="text-xs">{agent.role}</Badge>
                     <Badge variant="outline" className="text-xs">{agent.model}</Badge>
-                    <span className="text-xs text-muted-foreground">
-                      {agent.sessionKey}
-                    </span>
+                    {agent.totalRuns > 0 && (
+                      <span className="text-xs text-muted-foreground">
+                        {agent.totalRuns} run{agent.totalRuns !== 1 ? "s" : ""}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <Button
@@ -264,32 +216,25 @@ export function OpenClawConnector() {
               />
             </div>
 
-            {/* Session picker */}
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Gateway Session</label>
-              {loadingSessions ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
-                  <LoaderIcon className="size-3.5 animate-spin" />
-                  Fetching sessions from Gateway...
-                </div>
-              ) : sessions.length > 0 ? (
-                <select
-                  className="w-full rounded-md border bg-transparent px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                  value={selectedSession}
-                  onChange={(e) => setSelectedSession(e.target.value)}
-                >
-                  <option value="">Select a session...</option>
-                  {sessions.map((s) => (
-                    <option key={s.key} value={s.key}>
-                      {s.key} — {s.model} ({(s.totalTokens / 1000).toFixed(0)}k tokens)
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <p className="text-xs text-muted-foreground py-1">
-                  No sessions loaded yet. Gateway will be queried on connect.
-                </p>
-              )}
+              <label className="text-xs text-muted-foreground mb-1 block">Webhook URL</label>
+              <input
+                className="w-full rounded-md border bg-transparent px-3 py-1.5 text-sm font-mono placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                placeholder="https://api.example.com/webhook"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">Authorization Header (optional)</label>
+              <input
+                className="w-full rounded-md border bg-transparent px-3 py-1.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                placeholder="Bearer your-token-here"
+                type="password"
+                value={webhookAuthHeader}
+                onChange={(e) => setWebhookAuthHeader(e.target.value)}
+              />
             </div>
 
             <div className="grid grid-cols-2 gap-2">
@@ -341,7 +286,7 @@ export function OpenClawConnector() {
             <Button
               variant={agents.length > 0 ? "outline" : "default"}
               size="sm"
-              onClick={handleShowForm}
+              onClick={() => setShowForm(true)}
             >
               <PlusIcon className="size-3.5" />
               Add OpenClaw Agent

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { probeGateway, type GatewayConfig } from "../../../lib/openclaw-gateway"
+import { probeWebhook, type OpenClawConfig } from "../../../lib/openclaw-gateway"
 import { saveAgent } from "../../../lib/openclaw-store"
 import { registerAgent } from "../../../lib/bridge"
 import { generateToken } from "../../../lib/auth"
@@ -8,8 +8,8 @@ import type { HeartbeatConfig } from "../../../lib/openclaw-store"
 /**
  * POST /api/openclaw/agents/connect
  *
- * Register an OpenClaw Gateway agent with the XO Org bridge.
- * Validates Gateway connectivity via WebSocket V3 probe before registering.
+ * Register an OpenClaw HTTP webhook agent with the XO Org bridge.
+ * Validates webhook connectivity via HTTP probe before registering.
  */
 export async function POST(req: Request) {
   let body: Record<string, unknown>
@@ -22,16 +22,16 @@ export async function POST(req: Request) {
   const {
     agentId, name, role, model, modelProvider, permission,
     channels, description, systemInstructions,
-    adapterType, gatewayUrl, gatewayToken, gatewayPassword,
-    privateKeyPem, disableDeviceAuth, autoPairOnFirstConnect,
+    adapterType, url, webhookAuthHeader, customHeaders,
+    method, timeoutSec,
     sessionKeyStrategy, fixedSessionKey,
     payloadTemplate, heartbeat,
   } = body as {
     agentId?: string; name?: string; role?: string; model?: string
     modelProvider?: string; permission?: string; channels?: string[]
     description?: string; systemInstructions?: string; adapterType?: string
-    gatewayUrl?: string; gatewayToken?: string; gatewayPassword?: string
-    privateKeyPem?: string; disableDeviceAuth?: boolean; autoPairOnFirstConnect?: boolean
+    url?: string; webhookAuthHeader?: string; customHeaders?: Record<string, string>
+    method?: string; timeoutSec?: number
     sessionKeyStrategy?: string; fixedSessionKey?: string
     payloadTemplate?: Record<string, unknown>; heartbeat?: Partial<HeartbeatConfig>
   }
@@ -39,36 +39,35 @@ export async function POST(req: Request) {
   if (!agentId?.trim()) {
     return NextResponse.json({ ok: false, error: "agentId is required" }, { status: 400 })
   }
-  if (!gatewayUrl?.trim()) {
-    return NextResponse.json({ ok: false, error: "gatewayUrl is required" }, { status: 400 })
+  if (!url?.trim()) {
+    return NextResponse.json({ ok: false, error: "url (webhook endpoint) is required" }, { status: 400 })
   }
 
   // Validate URL protocol
   try {
-    const parsed = new URL(gatewayUrl)
-    if (!["ws:", "wss:"].includes(parsed.protocol)) {
+    const parsed = new URL(url)
+    if (!["http:", "https:"].includes(parsed.protocol)) {
       return NextResponse.json(
-        { ok: false, error: "Gateway URL must use ws:// or wss:// protocol" },
+        { ok: false, error: "Webhook URL must use http:// or https:// protocol" },
         { status: 400 }
       )
     }
   } catch {
-    return NextResponse.json({ ok: false, error: "Invalid Gateway URL" }, { status: 400 })
+    return NextResponse.json({ ok: false, error: "Invalid webhook URL" }, { status: 400 })
   }
 
-  // Probe Gateway via WebSocket before registering
-  const config: GatewayConfig = {
-    url: gatewayUrl.trim(),
-    authToken: gatewayToken?.trim() || undefined,
-    password: gatewayPassword || undefined,
-    disableDeviceAuth: disableDeviceAuth ?? false,
-    autoPairOnFirstConnect: autoPairOnFirstConnect ?? true,
+  // Probe webhook before registering
+  const config: OpenClawConfig = {
+    url: url.trim(),
+    webhookAuthHeader: webhookAuthHeader?.trim() || undefined,
+    customHeaders,
+    method,
   }
 
-  const probe = await probeGateway(config)
+  const probe = await probeWebhook(config)
   if (probe.status === "failed") {
     return NextResponse.json(
-      { ok: false, error: `Cannot reach Gateway: ${probe.error ?? "connection failed"}`, latencyMs: probe.latencyMs },
+      { ok: false, error: `Cannot reach webhook: ${probe.error ?? "connection failed"}`, latencyMs: probe.latencyMs },
       { status: 502 }
     )
   }
@@ -94,13 +93,12 @@ export async function POST(req: Request) {
       permission: permission ?? "member",
       description: description ?? "",
       systemInstructions: systemInstructions ?? "",
-      adapterType: (adapterType as "openclaw_gateway" | "http") ?? "openclaw_gateway",
-      gatewayUrl: gatewayUrl.trim(),
-      gatewayToken: gatewayToken?.trim() ?? "",
-      gatewayPassword: gatewayPassword || undefined,
-      privateKeyPem: privateKeyPem || undefined,
-      disableDeviceAuth: disableDeviceAuth ?? false,
-      autoPairOnFirstConnect: autoPairOnFirstConnect ?? true,
+      adapterType: (adapterType as "openclaw_webhook" | "http") ?? "openclaw_webhook",
+      url: url.trim(),
+      webhookAuthHeader: webhookAuthHeader?.trim() ?? "",
+      customHeaders,
+      method: method ?? "POST",
+      timeoutSec: timeoutSec ?? 30,
       sessionKeyStrategy: (sessionKeyStrategy as "issue" | "fixed" | "run") ?? "fixed",
       fixedSessionKey: fixedSessionKey || undefined,
       payloadTemplate: payloadTemplate ?? { agentId: "{{agent.id}}" },
@@ -123,13 +121,13 @@ export async function POST(req: Request) {
       data: {
         agentId: agent.agentId,
         name: agent.name,
-        gatewayUrl: agent.gatewayUrl,
+        url: agent.url,
         adapterType: agent.adapterType,
         sessionKeyStrategy: agent.sessionKeyStrategy,
         heartbeat: agent.heartbeat,
         status: agent.status,
         token,
-        gatewayProbe: { status: probe.status, latencyMs: probe.latencyMs },
+        probe: { status: probe.status, latencyMs: probe.latencyMs },
       },
     })
   } catch (err) {

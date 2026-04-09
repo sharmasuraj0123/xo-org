@@ -50,9 +50,10 @@ export default function ConnectAgentPage() {
   const [description] = useState("")
 
   // Adapter
-  const [adapterType, setAdapterType] = useState("openclaw_gateway")
-  const [gatewayUrl, setGatewayUrl] = useState("")
-  const [gatewayToken, setGatewayToken] = useState("")
+  const [adapterType, setAdapterType] = useState("openclaw_webhook")
+  const [webhookUrl, setWebhookUrl] = useState("")
+  const [webhookAuthHeader, setWebhookAuthHeader] = useState("")
+  const [timeoutSec, setTimeoutSec] = useState("30")
   const [sessionKeyStrategy] = useState("issue")
   const [payloadTemplate, setPayloadTemplate] = useState(
     JSON.stringify(
@@ -95,7 +96,10 @@ export default function ConnectAgentPage() {
       const res = await fetch("/api/openclaw/agents/test-environment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ gatewayUrl, gatewayToken }),
+        body: JSON.stringify({
+          url: webhookUrl,
+          webhookAuthHeader,
+        }),
       })
       const data = await res.json()
       if (data.ok) {
@@ -117,7 +121,7 @@ export default function ConnectAgentPage() {
   const handleSubmit = async () => {
     if (!agentName.trim()) { setError("Agent name is required"); return }
     if (!agentId.trim()) { setError("Agent ID is required"); return }
-    if (!gatewayUrl.trim()) { setError("Gateway URL is required"); return }
+    if (!webhookUrl.trim()) { setError("Webhook URL is required"); return }
 
     // Validate payload template JSON
     let parsedPayload: Record<string, unknown> = {}
@@ -141,8 +145,9 @@ export default function ConnectAgentPage() {
           description,
           systemInstructions: instructions,
           adapterType,
-          gatewayUrl: gatewayUrl.trim(),
-          gatewayToken: gatewayToken.trim(),
+          url: webhookUrl.trim(),
+          webhookAuthHeader: webhookAuthHeader.trim() || undefined,
+          timeoutSec: parseInt(timeoutSec) || 30,
           sessionKeyStrategy,
           payloadTemplate: parsedPayload,
           heartbeat: {
@@ -181,7 +186,7 @@ export default function ConnectAgentPage() {
             <div>
               <h2 className="text-lg font-semibold">New Agent</h2>
               <p className="text-sm text-muted-foreground">
-                Advanced agent configuration
+                Connect an OpenClaw agent via HTTP webhook
               </p>
             </div>
           </div>
@@ -238,31 +243,47 @@ export default function ConnectAgentPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="openclaw_gateway">OpenClaw Gateway</SelectItem>
+                        <SelectItem value="openclaw_webhook">OpenClaw Webhook</SelectItem>
                         <SelectItem value="http">HTTP Endpoint</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
 
                   <div className="grid gap-2">
-                    <Label htmlFor="gateway-url">Gateway URL</Label>
+                    <Label htmlFor="webhook-url">Webhook URL</Label>
                     <Input
-                      id="gateway-url"
-                      placeholder="ws://127.0.0.1:18789"
-                      value={gatewayUrl}
-                      onChange={(e) => setGatewayUrl(e.target.value)}
+                      id="webhook-url"
+                      placeholder="https://api.example.com/webhook"
+                      value={webhookUrl}
+                      onChange={(e) => setWebhookUrl(e.target.value)}
                       className="font-mono text-sm"
                     />
                   </div>
 
                   <div className="grid gap-2">
-                    <Label htmlFor="gateway-token">Gateway Token</Label>
+                    <Label htmlFor="webhook-auth">Authorization Header</Label>
                     <Input
-                      id="gateway-token"
+                      id="webhook-auth"
                       type="password"
-                      placeholder="xo"
-                      value={gatewayToken}
-                      onChange={(e) => setGatewayToken(e.target.value)}
+                      placeholder="Bearer your-token-here"
+                      value={webhookAuthHeader}
+                      onChange={(e) => setWebhookAuthHeader(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      e.g. &quot;Bearer my-secret-token&quot; or leave empty for no auth
+                    </p>
+                  </div>
+
+                  <div className="grid gap-2">
+                    <Label htmlFor="timeout">Timeout (seconds)</Label>
+                    <Input
+                      id="timeout"
+                      type="number"
+                      min="5"
+                      max="300"
+                      value={timeoutSec}
+                      onChange={(e) => setTimeoutSec(e.target.value)}
+                      className="w-32"
                     />
                   </div>
 
@@ -275,6 +296,9 @@ export default function ConnectAgentPage() {
                       className="min-h-28 resize-y font-mono text-sm"
                       spellCheck={false}
                     />
+                    <p className="text-xs text-muted-foreground">
+                      Template fields merge at root level. Use {'{{agent.id}}'}, {'{{run.id}}'}, {'{{prompt}}'} etc.
+                    </p>
                   </div>
 
                   {/* Environment test results */}

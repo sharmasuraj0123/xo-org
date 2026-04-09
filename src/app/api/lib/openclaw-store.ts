@@ -1,8 +1,9 @@
 /**
  * OpenClaw agent connection persistence.
  *
- * Stores agents connected via OpenClaw Gateway adapter.
- * Each agent has its own Gateway URL, payload template, and heartbeat config.
+ * Stores agents connected via OpenClaw HTTP webhook adapter.
+ * Each agent has its own webhook URL, auth header, payload template,
+ * and heartbeat config.
  */
 
 export interface HeartbeatConfig {
@@ -32,24 +33,26 @@ export interface OpenClawAgent {
   systemInstructions: string
 
   /** Adapter type */
-  adapterType: "openclaw_gateway" | "http"
+  adapterType: "openclaw_webhook" | "http"
 
-  /** OpenClaw Gateway WebSocket URL (e.g. ws://127.0.0.1:18789) */
-  gatewayUrl: string
-  /** Auth token for Gateway */
-  gatewayToken: string
-  /** Optional password auth */
-  gatewayPassword?: string
-  /** ED25519 private key PEM for device auth (empty = ephemeral) */
-  privateKeyPem?: string
-  /** Disable ED25519 device signing */
-  disableDeviceAuth?: boolean
-  /** Auto-approve device pairing on first connect */
-  autoPairOnFirstConnect: boolean
+  /** OpenClaw webhook endpoint URL (e.g. https://api.example.com/webhook) */
+  url: string
+  /** Authorization header value (e.g. "Bearer my-token") */
+  webhookAuthHeader: string
+  /** Additional custom headers */
+  customHeaders?: Record<string, string>
+  /** HTTP method (default: POST) */
+  method?: string
+  /** Request timeout in seconds (default: 30) */
+  timeoutSec: number
+
   /** Session key strategy */
   sessionKeyStrategy: "issue" | "fixed" | "run"
   /** Fixed session key (when strategy = "fixed") */
   fixedSessionKey?: string
+  /** Tracked sessionId for continuity (set from webhook responses) */
+  sessionId?: string
+
   /** Payload template JSON — interpolated with context vars on invocation */
   payloadTemplate: Record<string, unknown>
 
