@@ -47,11 +47,8 @@ export async function POST(req: Request) {
     // Connect via WebSocket and send the message
     const config: GatewayConfig = {
       url: agent.gatewayUrl,
-      authToken: agent.gatewayToken || undefined,
-      password: agent.gatewayPassword,
-      privateKeyPem: agent.privateKeyPem,
-      disableDeviceAuth: agent.disableDeviceAuth,
-      autoPairOnFirstConnect: agent.autoPairOnFirstConnect,
+      authToken: agent.gatewayToken,
+      disableDeviceAuth: true,
     }
 
     const client = await connectToGateway(config)
