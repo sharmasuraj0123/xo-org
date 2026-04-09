@@ -24,6 +24,39 @@ const DEFAULT_CLIENT_MODE = "backend"
 const DEFAULT_CLIENT_VERSION = "xo-org"
 const MAX_PAYLOAD = 25 * 1024 * 1024 // 25MB
 
+// ─── Device Key Cache ────────────────────────────────────────
+// Cache device keys per gateway URL+token so the same device identity
+// is reused across connections (prevents "device identity mismatch")
+
+interface CachedDeviceIdentity {
+  deviceId: string
+  pubRaw: Buffer
+  privateKey: crypto.KeyObject
+}
+
+const deviceKeyCache = new Map<string, CachedDeviceIdentity>()
+
+function getDeviceIdentity(config: GatewayConfig): CachedDeviceIdentity {
+  const cacheKey = `${config.url}::${config.authToken ?? ""}::${config.clientId ?? DEFAULT_CLIENT_ID}`
+  const cached = deviceKeyCache.get(cacheKey)
+  if (cached) return cached
+
+  const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519")
+  const rawPub = publicKey.export({ type: "spki", format: "der" })
+  const identity: CachedDeviceIdentity = {
+    deviceId: crypto.randomUUID(),
+    pubRaw: Buffer.from(rawPub.subarray(rawPub.length - 32)),
+    privateKey,
+  }
+  deviceKeyCache.set(cacheKey, identity)
+  return identity
+}
+
+function clearDeviceCache(config: GatewayConfig) {
+  const cacheKey = `${config.url}::${config.authToken ?? ""}::${config.clientId ?? DEFAULT_CLIENT_ID}`
+  deviceKeyCache.delete(cacheKey)
+}
+
 // ─── Frame Types ─────────────────────────────────────────────
 
 interface GatewayRequestFrame {
@@ -393,25 +426,28 @@ export async function connectToGateway(
   // Auth token
   const auth = connectParams.auth as Record<string, unknown>
   if (config.authToken) auth.token = config.authToken
+  if (config.password) auth.password = config.password
 
-  // Ephemeral device signing — V3 protocol requires this for operator.write scope
-  const { publicKey: devPub, privateKey: devPriv } = crypto.generateKeyPairSync("ed25519")
-  const rawPub = devPub.export({ type: "spki", format: "der" })
-  const raw32 = rawPub.subarray(rawPub.length - 32)
-  const deviceId = crypto.randomUUID()
-  const signedAt = Date.now()
-  const sigPayload = [
-    "v3", deviceId, config.clientId ?? DEFAULT_CLIENT_ID,
-    config.clientMode ?? DEFAULT_CLIENT_MODE, config.role ?? DEFAULT_ROLE,
-    (config.scopes ?? DEFAULT_SCOPES).join(","), String(signedAt),
-    config.authToken ?? "", nonce, process.platform, "",
-  ].join("|")
-  connectParams.device = {
-    id: deviceId,
-    publicKey: raw32.toString("base64url"),
-    signature: crypto.sign(null, Buffer.from(sigPayload), devPriv).toString("base64url"),
-    signedAt,
-    nonce,
+  // ED25519 device signing — V3 protocol requires this for operator.write scope
+  // Skip entirely when disableDeviceAuth is true (token-only auth)
+  if (!config.disableDeviceAuth) {
+    // Use cached device identity so the same device key is reused across
+    // connections to the same gateway (prevents "device identity mismatch")
+    const device = getDeviceIdentity(config)
+    const signedAt = Date.now()
+    const sigPayload = [
+      "v3", device.deviceId, config.clientId ?? DEFAULT_CLIENT_ID,
+      config.clientMode ?? DEFAULT_CLIENT_MODE, config.role ?? DEFAULT_ROLE,
+      (config.scopes ?? DEFAULT_SCOPES).join(","), String(signedAt),
+      config.authToken ?? "", nonce, process.platform, "",
+    ].join("|")
+    connectParams.device = {
+      id: device.deviceId,
+      publicKey: device.pubRaw.toString("base64url"),
+      signature: crypto.sign(null, Buffer.from(sigPayload), device.privateKey).toString("base64url"),
+      signedAt,
+      nonce,
+    }
   }
 
   // Step 6: Send connect request
@@ -421,8 +457,8 @@ export async function connectToGateway(
     const errCode = res.error?.code ?? ""
     const errMsg = res.error?.message ?? errCode
 
-    // If gateway wants device pairing, approve it and retry once
-    if (errCode === "pairing_required" && _retryCount < 2) {
+    // If gateway wants device pairing, approve it and retry
+    if (errCode === "pairing_required" && _retryCount < 3) {
       const payload = res.payload as Record<string, unknown> | undefined
       const pairId = payload?.pairingRequestId as string | undefined
       if (pairId) {
@@ -432,10 +468,38 @@ export async function connectToGateway(
       return connectToGateway(config, _retryCount + 1)
     }
 
-    // If device identity mismatch, retry once with a fresh ephemeral key
-    if (errMsg.includes("device identity mismatch") && _retryCount < 1) {
+    // If device identity mismatch, clear cached device and retry
+    if (errMsg.includes("device identity mismatch") && _retryCount < 3) {
       client.close()
-      return connectToGateway(config, _retryCount + 1)
+      // Clear cached device key so a fresh one is generated
+      clearDeviceCache(config)
+      if (_retryCount === 0) {
+        // First retry: fresh device key, try auto-pair
+        return connectToGateway(config, _retryCount + 1)
+      }
+      if (_retryCount === 1) {
+        // Second retry: fall back to token-only auth (no device)
+        return connectToGateway({ ...config, disableDeviceAuth: true }, _retryCount + 1)
+      }
+      // Third retry: token-only with read-only scopes
+      return connectToGateway(
+        { ...config, disableDeviceAuth: true, scopes: ["operator.read"] },
+        _retryCount + 1
+      )
+    }
+
+    // If missing scope error, retry with reduced scopes (read-only token auth)
+    if (errMsg.includes("missing scope") && _retryCount < 2) {
+      client.close()
+      // The gateway token may not grant operator.write — retry with read-only scopes
+      // and device auth enabled to get the write scope via device signing
+      if (config.disableDeviceAuth) {
+        return connectToGateway({ ...config, disableDeviceAuth: false }, _retryCount + 1)
+      }
+      return connectToGateway(
+        { ...config, scopes: ["operator.read"] },
+        _retryCount + 1
+      )
     }
 
     client.close()
@@ -542,9 +606,24 @@ export async function executeAgent(
     const agentRes = await client.sendRequest("agent", agentParams, agentTimeout)
 
     if (!agentRes.ok) {
+      const agentErrMsg = agentRes.error?.message ?? "unknown"
+
+      // If the agent request failed due to missing scope, the connection
+      // succeeded (token-only) but lacks write permission. Retry the entire
+      // flow with device auth enabled to get operator.write scope.
+      if (agentErrMsg.includes("missing scope") && config.disableDeviceAuth) {
+        client.close()
+        client = null
+        onLog?.("stderr", `[openclaw-gateway] agent rejected: ${agentErrMsg} — retrying with device auth`)
+        const retryConfig = { ...config, disableDeviceAuth: false }
+        // Clear any cached device key so a fresh one is generated for pairing
+        clearDeviceCache(retryConfig)
+        return executeAgent(retryConfig, ctx, onEvent, onLog)
+      }
+
       return {
         exitCode: 1, signal: null, timedOut: false, events,
-        error: `openclaw_gateway_agent_error: ${agentRes.error?.message ?? "unknown"}`,
+        error: `openclaw_gateway_agent_error: ${agentErrMsg}`,
       }
     }
 

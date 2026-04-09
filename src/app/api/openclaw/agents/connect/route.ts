@@ -61,8 +61,8 @@ export async function POST(req: Request) {
     url: gatewayUrl.trim(),
     authToken: gatewayToken?.trim() || undefined,
     password: gatewayPassword || undefined,
-    disableDeviceAuth: disableDeviceAuth ?? true,
-    autoPairOnFirstConnect: autoPairOnFirstConnect ?? false,
+    disableDeviceAuth: disableDeviceAuth ?? false,
+    autoPairOnFirstConnect: autoPairOnFirstConnect ?? true,
   }
 
   const probe = await probeGateway(config)
@@ -99,9 +99,9 @@ export async function POST(req: Request) {
       gatewayToken: gatewayToken?.trim() ?? "",
       gatewayPassword: gatewayPassword || undefined,
       privateKeyPem: privateKeyPem || undefined,
-      disableDeviceAuth: disableDeviceAuth ?? true,
-      autoPairOnFirstConnect: autoPairOnFirstConnect ?? false,
-      sessionKeyStrategy: (sessionKeyStrategy as "issue" | "fixed" | "run") ?? "issue",
+      disableDeviceAuth: disableDeviceAuth ?? false,
+      autoPairOnFirstConnect: autoPairOnFirstConnect ?? true,
+      sessionKeyStrategy: (sessionKeyStrategy as "issue" | "fixed" | "run") ?? "fixed",
       fixedSessionKey: fixedSessionKey || undefined,
       payloadTemplate: payloadTemplate ?? { agentId: "{{agent.id}}" },
       heartbeat: {
