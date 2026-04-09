@@ -77,14 +77,60 @@ import path from "node:path"
 
 const STORE_PATH = path.join(process.cwd(), ".data", "openclaw-agents.json")
 
+/** Migrate legacy fields from WebSocket V3 format to HTTP webhook format */
+function migrateAgent(raw: Record<string, unknown>): OpenClawAgent {
+  const a = raw as Record<string, unknown>
+
+  // Migrate gatewayUrl → url (ws:// → http://)
+  if (!a.url && a.gatewayUrl) {
+    const gwUrl = String(a.gatewayUrl)
+    a.url = gwUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:")
+    delete a.gatewayUrl
+  }
+
+  // Migrate gatewayToken → webhookAuthHeader
+  if (!a.webhookAuthHeader && a.gatewayToken) {
+    a.webhookAuthHeader = `Bearer ${a.gatewayToken}`
+    delete a.gatewayToken
+  }
+
+  // Migrate adapterType
+  if (a.adapterType === "openclaw_gateway") {
+    a.adapterType = "openclaw_webhook"
+  }
+
+  // Default new fields
+  if (a.timeoutSec === undefined) a.timeoutSec = 30
+
+  // Clean up removed fields
+  delete a.gatewayPassword
+  delete a.privateKeyPem
+  delete a.disableDeviceAuth
+  delete a.autoPairOnFirstConnect
+
+  return a as unknown as OpenClawAgent
+}
+
 function loadFromDisk(): Map<string, OpenClawAgent> {
   try {
     if (fs.existsSync(STORE_PATH)) {
-      const data = JSON.parse(fs.readFileSync(STORE_PATH, "utf-8")) as OpenClawAgent[]
-      return new Map(data.map((a) => [a.agentId, a]))
+      const data = JSON.parse(fs.readFileSync(STORE_PATH, "utf-8")) as Record<string, unknown>[]
+      const migrated = data.map(migrateAgent)
+      const map = new Map(migrated.map((a) => [a.agentId, a]))
+      // Persist migrated data
+      saveToDiskDirect(map)
+      return map
     }
   } catch { /* ignore corrupt file */ }
   return new Map()
+}
+
+function saveToDiskDirect(map: Map<string, OpenClawAgent>) {
+  try {
+    const dir = path.dirname(STORE_PATH)
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(STORE_PATH, JSON.stringify(Array.from(map.values()), null, 2))
+  } catch { /* ignore write errors */ }
 }
 
 function saveToDisk() {
