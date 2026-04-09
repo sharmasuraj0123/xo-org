@@ -47,8 +47,11 @@ export async function POST(req: Request) {
     // Connect via WebSocket and send the message
     const config: GatewayConfig = {
       url: agent.gatewayUrl,
-      authToken: agent.gatewayToken,
-      disableDeviceAuth: true,
+      authToken: agent.gatewayToken || undefined,
+      password: agent.gatewayPassword,
+      privateKeyPem: agent.privateKeyPem,
+      disableDeviceAuth: agent.disableDeviceAuth,
+      autoPairOnFirstConnect: agent.autoPairOnFirstConnect,
     }
 
     const client = await connectToGateway(config)
@@ -63,8 +66,12 @@ export async function POST(req: Request) {
 
     if (!sendRes.ok) {
       // If sessions.send doesn't work, try alternative methods
+      const errMsg = sendRes.error?.message ?? "unknown"
+      const hint = errMsg.includes("scope")
+        ? " — ensure the gateway token has write permissions and device auth is configured correctly"
+        : ""
       return NextResponse.json(
-        { ok: false, error: `Gateway rejected message: ${sendRes.error?.message ?? "unknown"}` },
+        { ok: false, error: `Gateway rejected message: ${errMsg}${hint}` },
         { status: 502 }
       )
     }
