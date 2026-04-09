@@ -62,6 +62,9 @@ export async function POST(req: Request) {
   if (probe.status === "ok") {
     checks.push({ code: "gateway_reachable", level: "info", message: `Gateway authenticated at ${url}` })
     checks.push({ code: "gateway_latency", level: "info", message: `Round-trip: ${probe.latencyMs}ms` })
+    if (probe.writeVerified === false) {
+      checks.push({ code: "gateway_write", level: "warn", message: "Connected but write access not verified — ensure your token has operator.write scope" })
+    }
   } else if (probe.status === "challenge_only") {
     checks.push({ code: "gateway_reachable", level: "info", message: `Gateway reachable at ${url}` })
     checks.push({ code: "gateway_auth", level: "warn", message: probe.error || "Connected but authentication failed — check token/password" })

@@ -32,49 +32,55 @@ import { NewObjectiveDialog } from "@/components/new-objective-dialog";
 import { OBJECTIVES, AGENTS, type Objective } from "@/lib/mock-data";
 import type { FC } from "react";
 
-const agents = [
-  { name: "Architect", initials: "AR", color: "text-blue-400" },
-  { name: "Coder 1", initials: "C1", color: "text-primary" },
-  { name: "Coder 2", initials: "C2", color: "text-primary" },
-  { name: "Tester", initials: "TE", color: "text-amber-400" },
-  { name: "Lint Bot", initials: "LB", color: "text-purple-400" },
-];
+function createChannelAdapter(channelName: string): ChatModelAdapter {
+  return {
+    async *run({ messages }) {
+      const lastUserMessage =
+        messages.filter((m) => m.role === "user").at(-1)?.content ?? [];
+      const userText = lastUserMessage
+        .filter((p): p is { type: "text"; text: string } => p.type === "text")
+        .map((p) => p.text)
+        .join(" ");
 
-const agentResponses = [
-  (msg: string) => `I'll review the architecture for this. "${msg}" — let me check the system design docs and get back with a plan.`,
-  (msg: string) => `On it. I'll start implementing this: "${msg}". Creating a branch now.`,
-  (msg: string) => `I can pick this up too. "${msg}" — I'll handle the tests for this change.`,
-  (msg: string) => `Running test suite against "${msg}". Will report back with results shortly.`,
-  (msg: string) => `Linting check for "${msg}" — all clear, no style violations detected.`,
-];
+      let responseText = "";
+      try {
+        // Find a connected agent for this channel
+        const statusRes = await fetch("/api/openclaw/agents/status");
+        const statusData = await statusRes.json();
+        const connectedAgents = Array.isArray(statusData.data) ? statusData.data : [];
+        const channelAgent = connectedAgents.find(
+          (a: { channels?: string[] }) => a.channels?.includes(channelName)
+        ) ?? connectedAgents[0];
 
-let agentIndex = 0;
+        if (!channelAgent) {
+          responseText = `No agents connected to #${channelName}. Connect an agent via Settings → Agents.`;
+        } else {
+          const res = await fetch("/api/openclaw/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              agentId: channelAgent.agentId,
+              message: userText,
+              sessionKey: `channel:${channelName}`,
+            }),
+          });
+          const data = await res.json();
+          if (data.ok && data.data?.response) {
+            responseText = `**${channelAgent.name ?? channelAgent.agentId}:** ${data.data.response}`;
+          } else {
+            responseText = data.error ?? "Failed to get response from agent.";
+          }
+        }
+      } catch {
+        responseText = "Unable to reach the gateway. Check your connection.";
+      }
 
-const MockChatAdapter: ChatModelAdapter = {
-  async *run({ messages }) {
-    const lastUserMessage =
-      messages.filter((m) => m.role === "user").at(-1)?.content ?? [];
-    const userText = lastUserMessage
-      .filter((p): p is { type: "text"; text: string } => p.type === "text")
-      .map((p) => p.text)
-      .join(" ");
-
-    const agent = agents[agentIndex % agents.length];
-    const responseFn = agentResponses[agentIndex % agentResponses.length];
-    agentIndex++;
-
-    await new Promise((r) => setTimeout(r, 300 + Math.random() * 400));
-
-    yield {
-      content: [
-        {
-          type: "text" as const,
-          text: `**${agent.name}:** ${responseFn(userText)}`,
-        },
-      ],
-    };
-  },
-};
+      yield {
+        content: [{ type: "text" as const, text: responseText }],
+      };
+    },
+  };
+}
 
 // --- Status dots ---
 const STATUS_DOTS: Record<string, string> = {
@@ -238,7 +244,7 @@ const GroupThread: FC<{
 // --- Main export ---
 
 export function ChannelChat({ channelName }: { channelName: string }) {
-  const runtime = useLocalRuntime(MockChatAdapter);
+  const runtime = useLocalRuntime(createChannelAdapter(channelName));
   const [selectedObjective, setSelectedObjective] = useState<Objective | null>(null);
   const [objectives, setObjectives] = useState<Objective[]>(
     OBJECTIVES.filter((o) => o.channelId === channelName)
@@ -287,7 +293,7 @@ export function ChannelChat({ channelName }: { channelName: string }) {
           #{channelName}
         </span>
         <span className="text-xs text-muted-foreground">
-          {agents.length} agents
+          {AGENTS.filter((a) => a.channels.includes(channelName)).length} agents
         </span>
 
         {/* Objective indicators */}
@@ -334,18 +340,18 @@ export function ChannelChat({ channelName }: { channelName: string }) {
             </Button>
           </NewObjectiveDialog>
           <div className="flex -space-x-1.5">
-            {agents.slice(0, 4).map((a) => (
+            {AGENTS.filter((a) => a.channels.includes(channelName)).slice(0, 4).map((a) => (
               <div
-                key={a.name}
+                key={a.id}
                 className="flex size-6 items-center justify-center rounded-full border-2 border-background bg-muted text-[9px] font-semibold text-muted-foreground"
                 title={a.name}
               >
-                {a.initials}
+                {a.name.slice(0, 2).toUpperCase()}
               </div>
             ))}
-            {agents.length > 4 && (
+            {AGENTS.filter((a) => a.channels.includes(channelName)).length > 4 && (
               <div className="flex size-6 items-center justify-center rounded-full border-2 border-background bg-muted text-[9px] font-medium text-muted-foreground">
-                +{agents.length - 4}
+                +{AGENTS.filter((a) => a.channels.includes(channelName)).length - 4}
               </div>
             )}
           </div>

@@ -204,8 +204,14 @@ export function resolveDeviceIdentity(config: GatewayConfig): DeviceIdentity {
     const rawPublic = publicKey.export({ type: "spki", format: "der" })
     // ED25519 public key is last 32 bytes of SPKI DER
     const raw32 = rawPublic.subarray(rawPublic.length - 32)
+    // Derive stable deviceId from public key so gateway recognises paired device
+    const hash = crypto.createHash("sha256").update(raw32).digest()
+    const deviceId = [
+      hash.subarray(0, 4), hash.subarray(4, 6), hash.subarray(6, 8),
+      hash.subarray(8, 10), hash.subarray(10, 16),
+    ].map(b => b.toString("hex")).join("-")
     return {
-      deviceId: crypto.randomUUID(),
+      deviceId,
       publicKeyRawBase64Url: raw32.toString("base64url"),
       privateKeyPem: config.privateKeyPem,
       source: "configured",
@@ -784,6 +790,7 @@ export async function probeGateway(config: GatewayConfig): Promise<{
   status: "ok" | "challenge_only" | "failed"
   latencyMs: number
   error?: string
+  writeVerified?: boolean
 }> {
   const start = Date.now()
   try {
@@ -813,11 +820,27 @@ export async function probeGateway(config: GatewayConfig): Promise<{
     if (probeConfig.password) auth.password = probeConfig.password
 
     const res = await client.sendRequest("connect", connectParams, 5000)
-    client.close()
 
     if (res.ok) {
-      return { status: "ok", latencyMs: Date.now() - start }
+      // Try a write probe to verify operator.write scope
+      let writeVerified = false
+      try {
+        const writeRes = await client.sendRequest("sessions.send", {
+          sessionKey: "__probe__",
+          message: { role: "user", content: [{ type: "text", text: "__probe__" }] },
+        }, 3000)
+        // "session not found" or ok means write access works
+        const errMsg = writeRes.error?.message ?? ""
+        writeVerified = writeRes.ok || errMsg.includes("not found") || errMsg.includes("session")
+        if (!writeVerified && errMsg.includes("scope")) writeVerified = false
+      } catch {
+        // Timeout or close — can't verify, leave as false
+      }
+      client.close()
+      return { status: "ok", latencyMs: Date.now() - start, writeVerified }
     }
+
+    client.close()
 
     // Token accepted but device pairing required — token is valid
     const errorCode = res.error?.code ?? ""
